@@ -407,13 +407,13 @@ export class TradingManager {
       return;
     }
 
-    // Entry: POST_ONLY limit order at entryPrice when up/down crosses entry, time < 3 min, price diff > input
+    // Entry: when UP or DOWN price >= entryPrice, place POST_ONLY limit at (entryPrice - 1); time < max remaining, price diff >= input
     await this.checkAndPlaceLimitOrder(yesTokenId, noTokenId);
   }
 
   /**
-   * Entry: POST_ONLY limit order at entryPrice when up/down crosses entry, time < 3 min, price diff > input.
-   * Fee Guard: only POST_ONLY limit orders for entry (no taker fee).
+   * Entry: when UP (or DOWN) token price >= entryPrice, place POST_ONLY limit BUY at (entryPrice - 1).
+   * UP has priority if both qualify. Fee Guard: only POST_ONLY limit orders for entry (no taker fee).
    */
   private async checkAndPlaceLimitOrder(yesTokenId: string, noTokenId: string): Promise<void> {
     try {
@@ -451,22 +451,22 @@ export class TradingManager {
 
       const yesPricePercent = toPercentage(yesPrice);
       const noPricePercent = toPercentage(noPrice);
-      const tolerance = 0.5;
+      // Entry when UP or DOWN token price >= entryPrice: place POST_ONLY at (entryPrice - 1). UP has priority if both qualify.
       let tokenToTrade: string | null = null;
       let direction: 'UP' | 'DOWN' | null = null;
 
-      if (yesPricePercent <= entryPrice + tolerance && yesPricePercent >= entryPrice - tolerance) {
+      if (yesPricePercent >= entryPrice) {
         tokenToTrade = yesTokenId;
         direction = 'UP';
-      } else if (noPricePercent <= entryPrice + tolerance && noPricePercent >= entryPrice - tolerance) {
+      } else if (noPricePercent >= entryPrice) {
         tokenToTrade = noTokenId;
         direction = 'DOWN';
       } else {
         if (activePositions.length > 0) {
-          const currentPrice = yesPricePercent >= noPricePercent ? yesPricePercent : noPricePercent;
-          if (currentPrice < entryPrice - tolerance) this.priceBelowEntry = true;
+          const currentPrice = Math.max(yesPricePercent, noPricePercent);
+          if (currentPrice < entryPrice) this.priceBelowEntry = true;
         }
-        console.log(`[TradingManager] Entry skipped: price not in entry band (UP=${yesPricePercent.toFixed(2)}, DOWN=${noPricePercent.toFixed(2)}, entry=${entryPrice}±${tolerance})`);
+        console.log(`[TradingManager] Entry skipped: neither side >= entry (UP=${yesPricePercent.toFixed(2)}, DOWN=${noPricePercent.toFixed(2)}, entry=${entryPrice})`);
         return;
       }
 
@@ -484,6 +484,7 @@ export class TradingManager {
         return;
       }
 
+      const limitPrice = Math.max(0, entryPrice - 1);
       this.isPlacingOrder = true;
       this.orderPlacementStartTime = Date.now();
       try {
@@ -493,11 +494,11 @@ export class TradingManager {
             orderId: result.orderId,
             direction,
             size: tradeSize,
-            limitPrice: entryPrice,
+            limitPrice,
             placedAt: Date.now(),
           });
           this.consecutiveFailures = 0;
-          console.log(`[TradingManager] POST_ONLY limit entry placed at ${entryPrice.toFixed(2)} (${direction}), orderId: ${result.orderId.substring(0, 8)}...`);
+          console.log(`[TradingManager] POST_ONLY limit entry placed at ${limitPrice.toFixed(2)} (${direction}), orderId: ${result.orderId.substring(0, 8)}...`);
         } else {
           this.consecutiveFailures++;
           console.warn('[TradingManager] Entry order placement failed:', result?.error || 'No order ID returned');
@@ -514,7 +515,7 @@ export class TradingManager {
     }
   }
 
-  /** Place a single POST_ONLY limit BUY at entryPrice (Fee Guard: maker-only, no taker fee). */
+  /** Place a single POST_ONLY limit BUY at (entryPrice - 1) when token price >= entryPrice (Fee Guard: maker-only, no taker fee). */
   private async placePostOnlyEntryLimitOrder(
     tokenId: string,
     entryPrice: number,
@@ -522,7 +523,7 @@ export class TradingManager {
     direction: 'UP' | 'DOWN'
   ): Promise<{ orderId?: string; error?: string }> {
     if (!this.browserClobClient || !this.apiCredentials) return { error: 'No client or credentials' };
-    const limitPricePercent = Math.max(0, entryPrice);
+    const limitPricePercent = Math.max(0, entryPrice - 1);
     const limitPriceDecimal = limitPricePercent / 100;
     const sizeInShares = tradeSize / limitPriceDecimal;
 
@@ -645,10 +646,10 @@ export class TradingManager {
 
   /**
    * Legacy: Check both UP and DOWN tokens and place market order when price equals entry price.
-   * Kept for reference; entry now uses POST_ONLY limit at entryPrice via checkAndPlaceLimitOrder.
+   * Kept for reference; entry now uses POST_ONLY limit at (entryPrice - 1) via checkAndPlaceLimitOrder.
    */
   private async _checkAndPlaceMarketOrder(_yesTokenId: string, _noTokenId: string): Promise<void> {
-    // Entry is now done via POST_ONLY limit at entryPrice (checkAndPlaceLimitOrder). Fee Guard: no market entry.
+    // Entry is now done via POST_ONLY limit at (entryPrice - 1) when token price >= entryPrice (checkAndPlaceLimitOrder). Fee Guard: no market entry.
   }
 
   /**
