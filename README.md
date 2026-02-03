@@ -2,6 +2,18 @@
 
 Trading bot for Polymarket 15-minute BTC (and multi-asset) Up/Down markets. Connects to Polymarket RTDS for prices, places POST_ONLY limit orders for entry and profit target, with Flip Guard and auto-redemption for resolved markets.
 
+## Push to a new GitHub repo
+
+1. On GitHub: **New repository** (e.g. `polymarket-bot`). Do **not** add a README, .gitignore, or license.
+2. Locally, add the remote and push:
+
+```bash
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+git push -u origin main
+```
+
+Use your repo URL in place of `YOUR_USERNAME/YOUR_REPO_NAME`. If you use SSH: `git@github.com:YOUR_USERNAME/YOUR_REPO_NAME.git`.
+
 ## Setup
 
 ```bash
