@@ -2,10 +2,11 @@ import { ClobClient } from '@polymarket/clob-client';
 import { BuilderConfig } from '@polymarket/builder-signing-sdk';
 import { Wallet, providers } from 'ethers';
 
-// Polymarket constants
+// Polymarket constants (no process.env here - this file runs in the browser where process is undefined in Vite)
 const CLOB_API_URL = 'https://clob.polymarket.com';
 const POLYGON_CHAIN_ID = 137;
-const POLYGON_RPC_URL = process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com';
+const POLYGON_RPC_URL =
+  (typeof process !== 'undefined' && process.env?.POLYGON_RPC_URL) || 'https://polygon-rpc.com';
 
 /**
  * Create a browser-based ClobClient for order placement
