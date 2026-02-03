@@ -6,6 +6,7 @@ import { getNext15MinIntervals } from './event-utils';
 import type { PriceUpdate, ConnectionStatus } from './types';
 import { Chart } from 'chart.js/auto';
 import annotationPlugin from 'chartjs-plugin-annotation';
+import { initializeBrowserClobClient as createBrowserClobClientFromInit } from './streaming-platform-clob-init';
 
 Chart.register(annotationPlugin);
 
@@ -2022,52 +2023,48 @@ export class StreamingPlatform {
 
   /**
    * Initialize browser ClobClient for client-side order placement (bypasses Cloudflare)
+   * Throws with a clear message if init fails (e.g. private key not configured, or client creation error).
    */
   private async initializeBrowserClobClient(): Promise<void> {
     if (!this.walletState.isConnected || !this.walletState.apiCredentials) {
-      console.warn('[Browser ClobClient] Cannot initialize - wallet not connected or credentials missing');
-      return;
+      throw new Error('Wallet not connected or API credentials missing. Connect wallet and initialize session.');
+    }
+
+    // Get private key from backend (required for browser ClobClient)
+    const response = await fetch('/api/wallet/private-key', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const msg = data?.error || `Private key API returned ${response.status}`;
+      if (response.status === 500 && (msg.includes('Private key') || msg.includes('not configured'))) {
+        throw new Error(
+          'Private key not configured. Add POLYMARKET_MAGIC_PK to your environment (.env locally or Vercel env vars) and try reconnecting.'
+        );
+      }
+      throw new Error(`Cannot initialize browser client: ${msg}`);
+    }
+
+    if (!data.privateKey) {
+      throw new Error('Private key not returned from server. Check that POLYMARKET_MAGIC_PK is set in your environment.');
     }
 
     try {
-      // Get private key from backend (for now, we'll need to pass it securely)
-      // In production, consider using a browser wallet extension instead
-      const response = await fetch('/api/wallet/private-key', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        // If endpoint doesn't exist, fall back to server-side API
-        console.warn('[Browser ClobClient] Private key endpoint not available, will use server-side API');
-        return;
-      }
-
-      const data = await response.json();
-      if (!data.privateKey) {
-        throw new Error('Private key not returned from server');
-      }
-
-      // Import the initialization function
-      const { initializeBrowserClobClient } = await import('./streaming-platform-clob-init');
-      
-      // Initialize browser ClobClient
-      const browserClobClient = await initializeBrowserClobClient(
+      const browserClobClient = await createBrowserClobClientFromInit(
         data.privateKey,
-        this.walletState.apiCredentials!,
+        this.walletState.apiCredentials,
         this.walletState.proxyAddress!
       );
-
-      // Set in trading manager
       this.tradingManager.setBrowserClobClient(browserClobClient);
-
       console.log('[Browser ClobClient] ✅ Successfully initialized and set in TradingManager');
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
       console.error('[Browser ClobClient] ❌ Failed to initialize:', error);
-      // Don't throw - fall back to server-side API
-      console.warn('[Browser ClobClient] Will use server-side API (may be blocked by Cloudflare)');
+      throw new Error(`Browser ClobClient initialization failed: ${detail}. Please try reconnecting your wallet.`);
     }
   }
 }
