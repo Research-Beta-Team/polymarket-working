@@ -401,12 +401,12 @@ export class TradingManager {
       return;
     }
 
-    // Entry: POST_ONLY limit order at entry-2 when up/down crosses entry, time < 3 min, price diff > input
+    // Entry: POST_ONLY limit order at entry-1 when up/down crosses entry, time < 3 min, price diff > input
     await this.checkAndPlaceLimitOrder(yesTokenId, noTokenId);
   }
 
   /**
-   * Entry: POST_ONLY limit order at entry-2 when up/down crosses entry, time < 3 min, price diff > input.
+   * Entry: POST_ONLY limit order at entry-1 when up/down crosses entry, time < 3 min, price diff > input.
    * Fee Guard: only POST_ONLY limit orders for entry (no taker fee).
    */
   private async checkAndPlaceLimitOrder(yesTokenId: string, noTokenId: string): Promise<void> {
@@ -465,11 +465,11 @@ export class TradingManager {
             orderId: result.orderId,
             direction,
             size: tradeSize,
-            limitPrice: entryPrice - 2,
+            limitPrice: entryPrice - 1,
             placedAt: Date.now(),
           });
           this.consecutiveFailures = 0;
-          console.log(`[TradingManager] POST_ONLY limit entry placed at ${(entryPrice - 2).toFixed(2)} (${direction}), orderId: ${result.orderId.substring(0, 8)}...`);
+          console.log(`[TradingManager] POST_ONLY limit entry placed at ${(entryPrice - 1).toFixed(2)} (${direction}), orderId: ${result.orderId.substring(0, 8)}...`);
         } else {
           this.consecutiveFailures++;
         }
@@ -485,7 +485,7 @@ export class TradingManager {
     }
   }
 
-  /** Place a single POST_ONLY limit BUY at entry-2 (Fee Guard: maker-only, no taker fee). */
+  /** Place a single POST_ONLY limit BUY at entry-1 (Fee Guard: maker-only, no taker fee). */
   private async placePostOnlyEntryLimitOrder(
     tokenId: string,
     entryPrice: number,
@@ -493,7 +493,7 @@ export class TradingManager {
     direction: 'UP' | 'DOWN'
   ): Promise<{ orderId?: string; error?: string }> {
     if (!this.browserClobClient || !this.apiCredentials) return { error: 'No client or credentials' };
-    const limitPricePercent = Math.max(0, entryPrice - 2);
+    const limitPricePercent = Math.max(0, entryPrice - 1);
     const limitPriceDecimal = limitPricePercent / 100;
     const sizeInShares = tradeSize / limitPriceDecimal;
 
@@ -607,6 +607,7 @@ export class TradingManager {
         this.status.positions = [...this.positions];
         this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
         console.log(`[TradingManager] ✅ Profit target limit sell filled, orderId: ${orderId.substring(0, 8)}..., removed ${before - this.positions.length} position(s)`);
+        this.notifyStatusUpdate();
       }
     } catch (e) {
       console.warn('[TradingManager] checkPendingProfitSellFills error:', e);
@@ -615,10 +616,10 @@ export class TradingManager {
 
   /**
    * Legacy: Check both UP and DOWN tokens and place market order when price equals entry price.
-   * Kept for reference; entry now uses POST_ONLY limit at entry-2 via checkAndPlaceLimitOrder.
+   * Kept for reference; entry now uses POST_ONLY limit at entry-1 via checkAndPlaceLimitOrder.
    */
   private async _checkAndPlaceMarketOrder(_yesTokenId: string, _noTokenId: string): Promise<void> {
-    // Entry is now done via POST_ONLY limit at entry-2 (checkAndPlaceLimitOrder). Fee Guard: no market entry.
+    // Entry is now done via POST_ONLY limit at entry-1 (checkAndPlaceLimitOrder). Fee Guard: no market entry.
   }
 
   /**

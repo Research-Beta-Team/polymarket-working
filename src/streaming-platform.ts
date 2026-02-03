@@ -30,6 +30,7 @@ export class StreamingPlatform {
   private priceUpdateInterval: number | null = null; // Interval for updating UP/DOWN prices
   private redemptionService: RedemptionService | null = null; // Auto-redemption for resolved markets (background)
   private priceChart: Chart | null = null; // Chart.js line chart instance
+  private ordersRefreshIntervalId: number | null = null; // Periodic refresh of orders/positions list
   // Wallet connection state
   private walletState: {
     eoaAddress: string | null;
@@ -69,9 +70,8 @@ export class StreamingPlatform {
     });
     this.tradingManager.setOnTradeUpdate((trade) => {
       this.renderTradingSection();
-      // When a buy order is filled, fetch and display orders
-      if (trade.side === 'BUY' && trade.status === 'filled') {
-        console.log('[Orders] Buy order filled, fetching order details...');
+      // When any order is filled (buy or sell), refresh orders/positions list so UI stays in sync
+      if (trade.status === 'filled') {
         this.fetchAndDisplayOrders();
       }
     });
@@ -163,14 +163,21 @@ export class StreamingPlatform {
     const sellAllBtn = document.getElementById('sell-all-btn');
     sellAllBtn?.addEventListener('click', async () => {
       if (!confirm('Sell all positions at market (emergency exit)?')) return;
+      const btn = sellAllBtn as HTMLButtonElement;
+      const originalText = btn.textContent;
       try {
+        btn.disabled = true;
+        btn.textContent = 'Selling...';
         await this.tradingManager.closeAllPositionsManually('Manual Sell all / Emergency');
         this.renderTradingSection();
-        this.fetchBalance();
+        await this.fetchBalance();
         this.fetchAndDisplayOrders();
       } catch (e) {
         console.error('Sell all failed:', e);
         alert('Sell all failed: ' + (e instanceof Error ? e.message : String(e)));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText ?? 'Sell all / Emergency';
       }
     });
 
@@ -1323,7 +1330,8 @@ export class StreamingPlatform {
     // Clear trading manager credentials
     this.tradingManager.setApiCredentials(null);
     this.tradingManager.setBrowserClobClient(null);
-    
+    this.stopOrdersRefreshInterval();
+
     // Update UI
     this.renderWalletSection();
     this.renderTradingSection();
@@ -1379,6 +1387,7 @@ export class StreamingPlatform {
 
       // Fetch orders once after initialization
       this.fetchAndDisplayOrders();
+      this.startOrdersRefreshInterval();
 
       this.renderWalletSection();
       alert('Trading session initialized successfully!');
@@ -1521,6 +1530,23 @@ export class StreamingPlatform {
 
     const footerProxy = document.getElementById('footer-proxy');
     if (footerProxy) footerProxy.textContent = this.walletState.proxyAddress || '--';
+  }
+
+  private startOrdersRefreshInterval(): void {
+    this.stopOrdersRefreshInterval();
+    const intervalMs = 20000; // 20 seconds
+    this.ordersRefreshIntervalId = window.setInterval(() => {
+      if (this.walletState.isInitialized && this.walletState.apiCredentials) {
+        this.fetchAndDisplayOrders();
+      }
+    }, intervalMs);
+  }
+
+  private stopOrdersRefreshInterval(): void {
+    if (this.ordersRefreshIntervalId !== null) {
+      window.clearInterval(this.ordersRefreshIntervalId);
+      this.ordersRefreshIntervalId = null;
+    }
   }
 
   /**
