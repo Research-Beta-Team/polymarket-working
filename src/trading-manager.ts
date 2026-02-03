@@ -179,6 +179,20 @@ export class TradingManager {
     return Math.abs(this.priceToBeat - this.currentPrice);
   }
 
+  /** Get price for a token; use browser client when available (same network path as order placement). */
+  private async getPriceForToken(tokenId: string, side: 'BUY' | 'SELL'): Promise<number | null> {
+    try {
+      const client = this.browserClobClient ?? this.clobClient;
+      const result = await client.getPrice(tokenId, side);
+      if (result == null) return null;
+      if (typeof result === 'number' && !isNaN(result)) return result;
+      if (typeof result === 'object' && result !== null && 'price' in result) return parseFloat((result as { price: string }).price);
+      return this.clobClient.getPrice(tokenId, side);
+    } catch {
+      return this.clobClient.getPrice(tokenId, side);
+    }
+  }
+
   /** Cancel a single order by ID (Fee Guard: only for Flip Guard cancel of pending bids). */
   private async cancelOrderById(orderId: string): Promise<boolean> {
     if (!this.browserClobClient) return false;
@@ -205,7 +219,11 @@ export class TradingManager {
     if (!this.browserClobClient || this.pendingEntryOrders.size === 0) return;
     try {
       const openOrders = await this.browserClobClient.getOpenOrders();
-      const openIds = new Set((openOrders || []).map((o: { id?: string }) => o.id || (o as any).orderID));
+      const openIds = new Set<string>();
+      (openOrders || []).forEach((o: { id?: string; orderID?: string }) => {
+        const id = o.id ?? (o as any).orderID;
+        if (id) openIds.add(id);
+      });
       for (const [tokenId, info] of this.pendingEntryOrders.entries()) {
         if (openIds.has(info.orderId)) continue;
         // Order no longer open → treat as filled
@@ -335,10 +353,11 @@ export class TradingManager {
       return;
     }
 
-    // If we have positions, update prices and check exit conditions FIRST (regardless of price difference)
-    // Price difference check only applies to entry conditions, not exit conditions
-    // CRITICAL: Exit conditions must ALWAYS be checked, even if entry orders are in progress!
+    // If we have positions, check pending entry fills first (so we don't miss other-side fills), then exit conditions
     if (activePositions.length > 0) {
+      if (this.pendingEntryOrders.size > 0) {
+        await this.checkPendingEntryOrderFills();
+      }
       // Check if EXIT order is already in progress (not entry orders - those shouldn't block exits!)
       if (this.isPlacingExitOrder) {
         // Don't spam logs, but check if stuck
@@ -348,13 +367,7 @@ export class TradingManager {
         }
         return; // Skip this check cycle, exit already in progress
       }
-      
-      // Log if entry orders are in progress (for debugging, but don't block)
-      if (this.isPlacingOrder || this.isPlacingSplitOrders) {
-        const timeSinceOrderStart = Date.now() - this.orderPlacementStartTime;
-        console.log(`[TradingManager] ℹ️ Entry order in progress (${timeSinceOrderStart}ms), but exit conditions will still be checked`);
-      }
-      
+
       // Update position prices continuously (even if entry orders are in progress)
       await this.updatePositionPrices();
       // Then check exit conditions (CRITICAL: this must always run when positions exist!)
@@ -441,8 +454,8 @@ export class TradingManager {
 
       const entryPrice = this.strategyConfig.entryPrice;
       const [yesPrice, noPrice] = await Promise.all([
-        this.clobClient.getPrice(yesTokenId, 'BUY'),
-        this.clobClient.getPrice(noTokenId, 'BUY'),
+        this.getPriceForToken(yesTokenId, 'BUY'),
+        this.getPriceForToken(noTokenId, 'BUY'),
       ]);
       if (!yesPrice || !noPrice) {
         console.warn('[TradingManager] Entry skipped: price fetch failed (yesPrice=' + (yesPrice != null) + ', noPrice=' + (noPrice != null) + ')');
@@ -628,7 +641,11 @@ export class TradingManager {
     if (!this.browserClobClient || this.pendingProfitSellOrders.size === 0) return;
     try {
       const openOrders = await this.browserClobClient.getOpenOrders();
-      const openIds = new Set((openOrders || []).map((o: { id?: string }) => o.id || (o as any).orderID));
+      const openIds = new Set<string>();
+      (openOrders || []).forEach((o: { id?: string; orderID?: string }) => {
+        const id = o.id ?? (o as any).orderID;
+        if (id) openIds.add(id);
+      });
       for (const [orderId, positionIds] of this.pendingProfitSellOrders.entries()) {
         if (openIds.has(orderId)) continue;
         this.pendingProfitSellOrders.delete(orderId);
@@ -1191,11 +1208,10 @@ export class TradingManager {
         return;
       }
 
-      // Get current market prices for both tokens
-      // Use SELL side for position valuation (what you'd get if selling now)
+      // Get current market prices for both tokens (use browser client when available)
       const [yesPrice, noPrice] = await Promise.all([
-        this.clobClient.getPrice(yesTokenId, 'SELL'),
-        this.clobClient.getPrice(noTokenId, 'SELL'),
+        this.getPriceForToken(yesTokenId, 'SELL'),
+        this.getPriceForToken(noTokenId, 'SELL'),
       ]);
 
       if (!yesPrice || !noPrice) {
@@ -1239,22 +1255,7 @@ export class TradingManager {
     // Get all active positions for this event
     const activePositions = this.getActivePositions();
 
-    if (activePositions.length === 0) {
-      // Only log occasionally to reduce noise
-      return;
-    }
-    
-    // DEBUG: Log that exit conditions are being checked
-    console.log(`[TradingManager] 🔍 CHECKING EXIT CONDITIONS for ${activePositions.length} position(s) at ${new Date().toISOString()}`);
-    
-    // Log position count for tracking
-    if (activePositions.length > 1) {
-      console.log(`[TradingManager] 👀 Checking exit conditions for ${activePositions.length} POSITIONS:`, activePositions.map(p => ({
-        id: p.id.substring(0, 8) + '...',
-        direction: p.direction,
-        size: p.size.toFixed(2),
-      })));
-    }
+    if (activePositions.length === 0) return;
 
     // If we have pending profit-target limit sells, check for fills before placing new exits
     if (this.pendingProfitSellOrders.size > 0) {
@@ -1273,17 +1274,11 @@ export class TradingManager {
         this.isPlacingExitOrder = false;
         this.orderPlacementStartTime = 0;
       } else {
-        console.log(`[TradingManager] ⚠️ checkExitConditions waiting - Exit order in progress (${timeSinceOrderStart}ms)`);
+        if (timeSinceOrderStart > 5000) console.log(`[TradingManager] Exit order in progress (${(timeSinceOrderStart / 1000).toFixed(0)}s)`);
         return;
       }
     }
     
-    // Log if entry orders are in progress (for debugging, but don't block exits)
-    if (this.isPlacingOrder || this.isPlacingSplitOrders) {
-      const timeSinceOrderStart = Date.now() - this.orderPlacementStartTime;
-      console.log(`[TradingManager] ℹ️ Entry order in progress (${timeSinceOrderStart}ms), but exit conditions will still be checked`);
-    }
-
     if (!this.activeEvent || !this.activeEvent.clobTokenIds || this.activeEvent.clobTokenIds.length < 2) {
       return;
     }
@@ -1296,11 +1291,10 @@ export class TradingManager {
         return;
       }
 
-      // Get current market prices for both tokens
-      // CRITICAL: Use SELL side for exit conditions (we're selling, so need BID prices)
+      // Get current market prices for both tokens (use browser client when available)
       const [yesPrice, noPrice] = await Promise.all([
-        this.clobClient.getPrice(yesTokenId, 'SELL'),
-        this.clobClient.getPrice(noTokenId, 'SELL'),
+        this.getPriceForToken(yesTokenId, 'SELL'),
+        this.getPriceForToken(noTokenId, 'SELL'),
       ]);
 
       if (!yesPrice || !noPrice) {
@@ -1320,15 +1314,6 @@ export class TradingManager {
 
       const profitTarget = this.strategyConfig.profitTargetPrice;
       const stopLoss = this.strategyConfig.stopLossPrice;
-      
-      // DEBUG: Always log prices when positions exist
-      console.log(`[TradingManager] 📊 Current Market Prices:`, {
-        yesPricePercent: yesPricePercent.toFixed(2),
-        noPricePercent: noPricePercent.toFixed(2),
-        profitTarget: profitTarget.toFixed(2),
-        stopLoss: stopLoss.toFixed(2),
-        activePositions: activePositions.length,
-      });
 
       // Validate profit target and stop loss are set
       if (profitTarget === undefined || profitTarget === null || isNaN(profitTarget)) {
@@ -1370,44 +1355,10 @@ export class TradingManager {
         position.currentPrice = currentPrice;
         const priceDiff = currentPrice - position.entryPrice;
         position.unrealizedProfit = (priceDiff / position.entryPrice) * position.size;
-        
-        // DEBUG: Always log when price is very high (potential profit target issue)
-        if (currentPrice >= 95 || direction === 'DOWN') {
-          console.log(`[TradingManager] 🔍 Position Check:`, {
-            positionId: position.id.substring(0, 8) + '...',
-            direction: direction,
-            entryPrice: position.entryPrice.toFixed(2),
-            currentPrice: currentPrice.toFixed(2),
-            yesPrice: yesPricePercent.toFixed(2),
-            noPrice: noPricePercent.toFixed(2),
-            profitTarget: profitTarget.toFixed(2),
-            stopLoss: stopLoss.toFixed(2),
-          });
-        }
 
-        // Check profit target condition
-        // CRITICAL: Current SELL price must be >= profit target to trigger exit
-        // This ensures we can sell at or above our profit target price
-        // Use a small epsilon for floating point comparison to handle edge cases
-        const epsilon = 0.01; // 0.01% tolerance
+        const epsilon = 0.01;
         const profitTargetMet = currentPrice >= (profitTarget - epsilon);
-        
-        // DEBUG: Always log profit target check for DOWN positions or when price is high
-        if (direction === 'DOWN' || currentPrice >= 95) {
-          console.log(`[TradingManager] 🔍 Profit Target Check:`, {
-            positionId: position.id.substring(0, 8) + '...',
-            direction: direction,
-            entryPrice: position.entryPrice.toFixed(2),
-            currentSellPrice: currentPrice.toFixed(2),
-            profitTarget: profitTarget.toFixed(2),
-            condition: `${currentPrice.toFixed(2)} >= ${(profitTarget - epsilon).toFixed(2)} = ${profitTargetMet}`,
-            priceDifference: (currentPrice - profitTarget).toFixed(2),
-            yesPrice: yesPricePercent.toFixed(2),
-            noPrice: noPricePercent.toFixed(2),
-            rawComparison: `${currentPrice} >= ${profitTarget}`,
-          });
-        }
-        
+
         if (profitTargetMet) {
           shouldExit = true;
           exitReason = `Profit target reached at ${currentPrice.toFixed(2)} (Position: ${position.id.substring(0, 8)}...)`;
