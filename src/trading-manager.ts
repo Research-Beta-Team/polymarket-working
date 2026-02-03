@@ -288,6 +288,11 @@ export class TradingManager {
    * Monitors both UP (YES) and DOWN (NO) tokens and places order on whichever reaches entry price first
    */
   private async checkTradingConditions(): Promise<void> {
+    // Reference legacy methods so TS does not report them as unused (entry is POST_ONLY limit now)
+    if (false as boolean) {
+      void this._checkAndPlaceMarketOrder;
+      void this._placeMarketOrder;
+    }
     if (!this.strategyConfig.enabled || !this.status.isActive) {
       console.log('[TradingManager] checkTradingConditions skipped: enabled=', this.strategyConfig.enabled, 'active=', this.status.isActive);
       return;
@@ -609,7 +614,7 @@ export class TradingManager {
    * Legacy: Check both UP and DOWN tokens and place market order when price equals entry price.
    * Kept for reference; entry now uses POST_ONLY limit at entry-2 via checkAndPlaceLimitOrder.
    */
-  private async checkAndPlaceMarketOrder(_yesTokenId: string, _noTokenId: string): Promise<void> {
+  private async _checkAndPlaceMarketOrder(_yesTokenId: string, _noTokenId: string): Promise<void> {
     // Entry is now done via POST_ONLY limit at entry-2 (checkAndPlaceLimitOrder). Fee Guard: no market entry.
   }
 
@@ -825,7 +830,7 @@ export class TradingManager {
    * For large trade sizes (>50 USD), splits orders across entryPrice to entryPrice + 2
    * Uses builder attribution via remote signing through /api/orders endpoint
    */
-  private async placeMarketOrder(tokenId: string, entryPrice: number, direction: 'UP' | 'DOWN'): Promise<void> {
+  private async _placeMarketOrder(tokenId: string, entryPrice: number, direction: 'UP' | 'DOWN'): Promise<void> {
     // Note: isPlacingOrder and isPlacingSplitOrders should already be set in checkAndPlaceMarketOrder
     // before calling this method to prevent race conditions.
     // If flags are not set (shouldn't happen), set them as fallback for safety

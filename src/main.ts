@@ -1,4 +1,6 @@
-import { MultiAssetStreamingPlatform } from './multi-asset-streaming-platform';
+// Multi-asset system commented out; using single-asset StreamingPlatform
+// import { MultiAssetStreamingPlatform } from './multi-asset-streaming-platform';
+import { StreamingPlatform } from './streaming-platform';
 import './styles.css';
 
 // Wait for DOM to be ready before initializing
@@ -18,7 +20,8 @@ function initializeApp(): void {
     return;
   }
 
-  const platform = new MultiAssetStreamingPlatform();
+  const platform = new StreamingPlatform();
+  // const platform = new MultiAssetStreamingPlatform();
   platform.initialize().catch((error) => {
     console.error('Failed to initialize platform:', error);
   });

@@ -15,7 +15,8 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "src/vite-env.d.ts"]
+  "include": ["src", "src/vite-env.d.ts"],
+  "exclude": ["src/multi-asset-streaming-platform.ts", "src/multi-asset-trading-manager.ts", "src/multi-asset-event-manager.ts"]
 }
 
 
