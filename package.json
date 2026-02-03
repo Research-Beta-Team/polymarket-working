@@ -1,0 +1,28 @@
+{
+  "name": "polymarket-streaming",
+  "version": "1.0.0",
+  "description": "BTC/USD streaming platform using Polymarket RTDS",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@vercel/node": "^5.5.23",
+    "typescript": "^5.3.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@polymarket/builder-signing-sdk": "^0.0.8",
+    "@polymarket/clob-client": "^5.2.0",
+    "ethers": "^5.7.2",
+    "viem": "^2.39.2"
+  },
+  "overrides": {
+    "path-to-regexp": "^8.2.0",
+    "undici": "^7.3.0",
+    "diff": "^8.0.3"
+  }
+}
