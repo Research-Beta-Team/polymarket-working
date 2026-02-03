@@ -567,17 +567,19 @@ export class TradingManager {
     }
   }
 
-  /** Place POST_ONLY limit sells at profit target for all positions (aggregated by token). */
-  private async placeProfitTargetLimitSells(activePositions: Position[], profitTarget: number): Promise<void> {
-    if (this.isPlacingExitOrder || activePositions.length === 0 || !this.browserClobClient) return;
+  /** Place POST_ONLY limit sells at profit target for all positions (aggregated by token). Returns true if at least one order was placed. */
+  private async placeProfitTargetLimitSells(activePositions: Position[], profitTarget: number): Promise<boolean> {
+    if (this.isPlacingExitOrder || activePositions.length === 0 || !this.browserClobClient) return false;
     this.isPlacingExitOrder = true;
     this.orderPlacementStartTime = Date.now();
     const aggregatedByToken = this.aggregatePositionsByToken(activePositions);
+    let placed = false;
     try {
       for (const [tokenId, data] of aggregatedByToken.entries()) {
         const result = await this.placePostOnlyLimitSellOrder(tokenId, data.totalShares, profitTarget);
         if (result.orderId) {
           this.pendingProfitSellOrders.set(result.orderId, data.positions.map(p => p.id));
+          placed = true;
           console.log(`[TradingManager] POST_ONLY limit sell at profit target ${profitTarget.toFixed(2)} placed, orderId: ${result.orderId.substring(0, 8)}...`);
         } else {
           console.warn(`[TradingManager] Profit target limit sell failed for token ${tokenId.substring(0, 8)}...:`, result.error);
@@ -588,6 +590,7 @@ export class TradingManager {
       this.orderPlacementStartTime = 0;
     }
     this.notifyStatusUpdate();
+    return placed;
   }
 
   /** Check if any pending profit-target limit sells have filled and remove positions. */
@@ -1479,7 +1482,7 @@ export class TradingManager {
           console.log(`[TradingManager] 🚨 Executing STOP LOSS exit via adaptive selling (market - emergency)...`);
           await this.closeAllPositionsWithAdaptiveSelling(exitReason, stopLoss, isDownDirection, yesPricePercent, noPricePercent);
         } else {
-          // Sell for profit: POST_ONLY limit order at profit target (Fee Guard: no taker fee)
+          // Sell for profit: POST_ONLY limit order at profit target only (no market fallback)
           console.log(`[TradingManager] 🎯 Placing POST_ONLY limit sell at profit target ${profitTarget.toFixed(2)}...`);
           await this.placeProfitTargetLimitSells(activePositions, profitTarget);
         }

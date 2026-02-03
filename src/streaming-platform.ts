@@ -4,6 +4,10 @@ import { TradingManager } from './trading-manager';
 import { RedemptionService } from './redemption-service';
 import { getNext15MinIntervals } from './event-utils';
 import type { PriceUpdate, ConnectionStatus } from './types';
+import { Chart } from 'chart.js/auto';
+import annotationPlugin from 'chartjs-plugin-annotation';
+
+Chart.register(annotationPlugin);
 
 export class StreamingPlatform {
   private wsClient: WebSocketClient;
@@ -25,6 +29,7 @@ export class StreamingPlatform {
   private downPrice: number | null = null; // Current DOWN token price (0-100 scale)
   private priceUpdateInterval: number | null = null; // Interval for updating UP/DOWN prices
   private redemptionService: RedemptionService | null = null; // Auto-redemption for resolved markets (background)
+  private priceChart: Chart | null = null; // Chart.js line chart instance
   // Wallet connection state
   private walletState: {
     eoaAddress: string | null;
@@ -290,12 +295,6 @@ export class StreamingPlatform {
 
     if (priceElement && this.currentPrice !== null) {
       priceElement.textContent = this.formatPrice(this.currentPrice);
-      
-      // Add animation class for price updates
-      priceElement.classList.add('price-update');
-      setTimeout(() => {
-        priceElement.classList.remove('price-update');
-      }, 300);
     }
 
     if (timestampElement && this.priceHistory.length > 0) {
@@ -309,24 +308,28 @@ export class StreamingPlatform {
       const change = current - previous;
       const changePercentValue = (change / previous) * 100;
       const changePercent = changePercentValue.toFixed(4);
-
-      changeElement.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePercentValue >= 0 ? '+' : ''}${changePercent}%)`;
-      changeElement.className = change >= 0 ? 'positive' : 'negative';
+      const iconName = change >= 0 ? 'trending_up' : 'trending_down';
+      const text = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePercentValue >= 0 ? '+' : ''}${changePercent}%)`;
+      changeElement.className = `text-sm mt-1 flex items-center gap-1 ${change >= 0 ? 'text-emerald-500' : 'text-red-500'}`;
+      changeElement.innerHTML = `<span class="material-icons-round text-sm">${iconName}</span> ${text}`;
     }
+
+    this.renderPriceLineChart();
   }
 
   private updateUI(): void {
     const statusElement = document.getElementById('connection-status');
     const errorElement = document.getElementById('error-message');
-    
+
     if (statusElement) {
       const isConnected = this.currentStatus.connected;
       statusElement.textContent = isConnected ? 'Connected' : 'Disconnected';
-      statusElement.className = isConnected ? 'status-connected' : 'status-disconnected';
+      statusElement.className = `text-[11px] font-medium ${isConnected ? 'text-emerald-500' : 'text-slate-500'}`;
     }
 
     if (errorElement) {
       errorElement.textContent = this.currentStatus.error || '';
+      (errorElement as HTMLElement).style.display = this.currentStatus.error ? 'block' : 'none';
     }
   }
 
@@ -613,11 +616,8 @@ export class StreamingPlatform {
     // Stop countdown if no active event
     if (!activeEvent) {
       this.stopCountdown();
-      activeEventContainer.innerHTML = `
-        <div class="active-event-empty">
-          <p>No active event at the moment</p>
-        </div>
-      `;
+      this.updateFooterIds('', '', '');
+      activeEventContainer.innerHTML = `<div class="text-center py-8 text-slate-500">No active event at the moment</div>`;
       return;
     }
 
@@ -632,59 +632,45 @@ export class StreamingPlatform {
       this.eventPriceToBeat.set(activeEvent.slug, this.currentPrice);
     }
 
+    this.updateFooterIds(activeEvent.conditionId || '', activeEvent.questionId || '', '');
+
+    const upPriceStr = this.upPrice !== null ? this.formatUpDownPrice(this.upPrice) : '--';
+    const downPriceStr = this.downPrice !== null ? this.formatUpDownPrice(this.downPrice) : '--';
+
     activeEventContainer.innerHTML = `
-      <div class="active-event-content">
-        <div class="active-event-header">
-          <span class="active-event-badge">ACTIVE EVENT</span>
-          <span class="active-event-status">LIVE</span>
-        </div>
-        <div class="active-event-title">${activeEvent.title}</div>
-        <div class="active-event-countdown">
-          <span class="countdown-label">Time Remaining:</span>
-          <span class="countdown-value" id="event-countdown">--:--:--</span>
-        </div>
-        <div class="active-event-price-to-beat">
-          <span class="price-to-beat-label">Price to Beat:</span>
-          <span class="price-to-beat-value">${priceToBeatDisplay}</span>
-        </div>
-        <div class="active-event-up-down-prices">
-          <button class="up-down-button up-button" id="up-price-button">
-            <span class="button-label">Up</span>
-            <span class="button-price" id="up-price-value">${this.upPrice !== null ? this.formatUpDownPrice(this.upPrice) : '--'}</span>
-          </button>
-          <button class="up-down-button down-button" id="down-price-button">
-            <span class="button-label">Down</span>
-            <span class="button-price" id="down-price-value">${this.downPrice !== null ? this.formatUpDownPrice(this.downPrice) : '--'}</span>
-          </button>
-        </div>
-        <div class="active-event-details">
-          <div class="active-event-detail-item">
-            <span class="detail-label">Start:</span>
-            <span class="detail-value">${activeEvent.formattedStartDate}</span>
+      <div class="flex justify-between items-start mb-6">
+        <div>
+          <div class="flex items-center gap-3">
+            <span class="bg-indigo-500/10 text-indigo-500 text-[10px] font-bold px-2 py-0.5 rounded border border-indigo-500/20 uppercase tracking-widest">Active Event</span>
+            <span class="flex items-center gap-1 px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-[10px] font-bold">
+              <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> LIVE
+            </span>
           </div>
-          <div class="active-event-detail-item">
-            <span class="detail-label">End:</span>
-            <span class="detail-value">${activeEvent.formattedEndDate}</span>
-          </div>
+          <h3 class="text-2xl font-bold mt-2 text-slate-900 dark:text-white">${activeEvent.title}</h3>
+          <p class="text-slate-500 text-sm mt-1">${activeEvent.formattedStartDate} – ${activeEvent.formattedEndDate}</p>
         </div>
-        <div class="active-event-info">
-          <div class="info-row">
-            <span class="info-label">Condition ID:</span>
-            <span class="info-value">${activeEvent.conditionId || '--'}</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Question ID:</span>
-            <span class="info-value">${activeEvent.questionId || '--'}</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">CLOB Token IDs:</span>
-            <span class="info-value">${activeEvent.clobTokenIds ? activeEvent.clobTokenIds.join(', ') : '--'}</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Slug:</span>
-            <span class="info-value slug-value">${activeEvent.slug}</span>
-          </div>
+        <div class="text-right">
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Time Remaining</p>
+          <div id="event-countdown" class="text-3xl font-mono font-bold text-indigo-500 mt-1">--:--:--</div>
         </div>
+      </div>
+      <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-6 border border-slate-100 dark:border-slate-600 mb-8">
+        <div class="flex flex-col items-center justify-center">
+          <p class="text-sm font-medium text-slate-500 mb-1">Target Price to Beat</p>
+          <p class="text-4xl font-mono font-bold text-violet-600 dark:text-violet-400 tracking-tighter">${priceToBeatDisplay}</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-6">
+        <button type="button" class="group relative overflow-hidden bg-emerald-500 text-white p-6 rounded-2xl flex flex-col items-center gap-2 hover:opacity-90 transition-all transform active:scale-[0.98]" id="up-price-button">
+          <span class="material-icons-round text-4xl group-hover:-translate-y-1 transition-transform">expand_less</span>
+          <span class="text-2xl font-black uppercase tracking-widest">UP</span>
+          <span class="text-lg font-bold bg-white/20 px-4 py-1 rounded-full" id="up-price-value">${upPriceStr}</span>
+        </button>
+        <button type="button" class="group relative overflow-hidden bg-red-500 text-white p-6 rounded-2xl flex flex-col items-center gap-2 hover:opacity-90 transition-all transform active:scale-[0.98]" id="down-price-button">
+          <span class="material-icons-round text-4xl group-hover:translate-y-1 transition-transform">expand_more</span>
+          <span class="text-2xl font-black uppercase tracking-widest">DOWN</span>
+          <span class="text-lg font-bold bg-white/20 px-4 py-1 rounded-full" id="down-price-value">${downPriceStr}</span>
+        </button>
       </div>
     `;
 
@@ -695,6 +681,9 @@ export class StreamingPlatform {
     if (activeEvent.clobTokenIds && activeEvent.clobTokenIds.length >= 2) {
       this.updateUpDownPrices();
     }
+
+    // Update line chart so Target line (price to beat) is shown
+    this.renderPriceLineChart();
   }
 
   private renderEventsTable(): void {
@@ -750,221 +739,334 @@ export class StreamingPlatform {
       console.error('App element not found! Make sure index.html has <div id="app"></div>');
       return;
     }
-    
+
+    if (this.priceChart) {
+      try {
+        this.priceChart.destroy();
+      } catch {
+        // ignore
+      }
+      this.priceChart = null;
+    }
+
     console.log('Rendering platform UI...');
 
     app.innerHTML = `
-      <div class="container">
-        <header>
-          <h1>BTC/USD Streaming Platform</h1>
-          <p class="subtitle">Real-time cryptocurrency price data from Polymarket</p>
-        </header>
-
-        <div class="controls">
-          <div class="button-group">
-            <button id="connect" class="btn btn-primary">Connect</button>
-            <button id="disconnect" class="btn btn-secondary">Disconnect</button>
-          </div>
-        </div>
-
-        <div class="status-bar">
-          <div class="status-item">
-            <span class="status-label">Status:</span>
-            <span id="connection-status" class="status-disconnected">Disconnected</span>
-          </div>
-          <div id="error-message" class="error-message"></div>
-        </div>
-
-        <div class="price-display">
-          <div class="price-label">Current Price</div>
-          <div id="current-price" class="price-value">--</div>
-          <div class="price-meta">
-            <span>Last Update: <span id="price-timestamp">--</span></span>
-            <span id="price-change" class="price-change">--</span>
-          </div>
-        </div>
-
-        <div class="active-event-section" id="active-event-display">
-          <div class="active-event-empty">
-            <p>Loading events...</p>
-          </div>
-        </div>
-
-        <div class="events-section">
-          <div class="events-section-header" id="events-section-header">
-            <h2>BTC Up/Down 15m Events</h2>
-            <span class="events-chevron" id="events-chevron">▶</span>
-          </div>
-          <div class="events-section-content collapsed" id="events-section-content">
-            <div id="events-error" class="error-message"></div>
-            <div class="events-table-container">
-              <table class="events-table">
-                <thead>
-                  <tr>
-                    <th>Title</th>
-                    <th>Start Date</th>
-                    <th>End Date</th>
-                    <th>Status</th>
-                    <th>Price to Beat</th>
-                    <th>Condition ID</th>
-                    <th>Question ID</th>
-                    <th>CLOB Token IDs</th>
-                    <th>Slug</th>
-                  </tr>
-                </thead>
-                <tbody id="events-table-body">
-                  <tr>
-                    <td colspan="9" style="text-align: center; padding: 20px;">Loading events...</td>
-                  </tr>
-                </tbody>
-              </table>
+      <header class="sticky top-0 z-50 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-black/90 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center text-white">
+              <span class="material-icons-round text-xl">analytics</span>
             </div>
+            <h1 class="text-xl font-bold tracking-tight">CryptoDash <span class="text-xs font-normal text-slate-500 dark:text-slate-400 ml-2">BTC/USD Streaming</span></h1>
+          </div>
+          <div class="flex items-center gap-4">
+            <div id="wallet-status-display" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-semibold">Wallet Not Connected</div>
+            <button id="disconnect-wallet" type="button" class="px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-sm font-medium transition-all" style="display: none;">Disconnect</button>
           </div>
         </div>
+      </header>
 
-        <div class="wallet-section" id="wallet-section">
-          <h2>Wallet Connection</h2>
-          <div class="wallet-controls">
-            <div class="wallet-status">
-              <div id="wallet-status-display"></div>
-              <div class="wallet-actions">
-                <button id="connect-wallet" class="btn btn-primary">Connect Wallet</button>
-                <button id="disconnect-wallet" class="btn btn-secondary" style="display: none;">Disconnect Wallet</button>
-                <button id="initialize-session" class="btn btn-primary" disabled>Initialize Trading Session</button>
+      <div id="error-message" class="max-w-7xl mx-auto px-4 py-1 text-sm text-red-600 dark:text-red-400"></div>
+
+      <main class="max-w-7xl mx-auto px-4 py-8">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          <div class="lg:col-span-2 bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden">
+            <div class="flex justify-between items-start mb-4">
+              <div>
+                <p class="text-sm font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Current BTC Price</p>
+                <div id="current-price" class="text-5xl font-black mt-1 tabular-nums text-slate-900 dark:text-white">--</div>
+                <p id="price-change" class="text-sm mt-1 flex items-center gap-1 text-slate-500">--</p>
+              </div>
+              <div class="text-right">
+                <p class="text-xs text-slate-400">Last Update</p>
+                <p id="price-timestamp" class="text-sm font-mono text-slate-500 dark:text-slate-400">--</p>
               </div>
             </div>
-            <div class="wallet-info" id="wallet-info" style="display: none;">
-              <h3>Wallet Information</h3>
-              <div class="wallet-details">
-                <div class="wallet-detail-item">
-                  <span class="detail-label">EOA Address:</span>
-                  <span class="detail-value" id="eoa-address">--</span>
-                </div>
-                <div class="wallet-detail-item">
-                  <span class="detail-label">Proxy Address:</span>
-                  <span class="detail-value" id="proxy-address">--</span>
-                </div>
-                <div class="wallet-detail-item" id="balance-display" style="display: none;">
-                  <span class="detail-label">Balance:</span>
-                  <span class="detail-value" id="wallet-balance">--</span>
-                </div>
+            <div id="price-chart-wrapper" class="w-full mt-4 price-chart-gradient rounded">
+              <canvas id="price-line-chart" role="img" aria-label="BTC price line chart with target"></canvas>
+            </div>
+          </div>
+          <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between">
+            <div class="space-y-4">
+              <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider">Session Stats</h3>
+              <div id="trading-status-display" class="grid grid-cols-2 gap-4">
+                <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-xl"><p class="text-xs text-slate-500">Total Profit</p><p class="text-xl font-bold text-emerald-500">$0.00</p></div>
+                <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-xl"><p class="text-xs text-slate-500">Win Rate</p><p class="text-xl font-bold">0%</p></div>
+                <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-xl"><p class="text-xs text-slate-500">Total Trades</p><p class="text-xl font-bold">0</p></div>
+                <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-xl"><p class="text-xs text-slate-500">Pending</p><p class="text-xl font-bold">0</p></div>
+              </div>
+            </div>
+            <div class="mt-6 pt-6 border-t border-slate-100 dark:border-slate-700">
+              <div class="flex items-center justify-between text-sm">
+                <span class="text-slate-500">Trading Status</span>
+                <span id="trading-status-badge" class="flex items-center gap-1.5 font-bold text-slate-500"><span class="w-2 h-2 rounded-full bg-slate-400"></span> INACTIVE</span>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="orders-section" id="orders-section">
-          <h2>Orders</h2>
-          <div class="orders-controls">
-            <button id="refresh-orders" class="btn btn-secondary">Refresh Orders</button>
-            <span id="orders-count" class="orders-count">Loading...</span>
-          </div>
-          <div id="orders-container" class="orders-container">
-            <p>Loading orders...</p>
-          </div>
-        </div>
-
-        <div class="trading-section" id="trading-section">
-          <h2>Automated Trading</h2>
-          <div class="trading-controls">
-            <div class="strategy-config">
-              <h3>Strategy Configuration</h3>
-              <div class="config-grid">
-                <div class="config-item">
-                  <label>
-                    <input type="checkbox" id="strategy-enabled" />
-                    Enable Strategy
-                  </label>
+        <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+          <div class="xl:col-span-8 space-y-6">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-lg overflow-hidden">
+              <div class="bg-gradient-to-r from-violet-600 to-indigo-500 h-1"></div>
+              <div class="p-6">
+                <div id="active-event-display">
+                  <div class="text-center py-8 text-slate-500">Loading events...</div>
                 </div>
-                  <div class="config-item">
-                    <label>
-                      Entry Price (0-100):
-                      <input type="number" id="entry-price" value="96" min="0" max="100" step="0.01" />
-                      <small>Order is filled when UP or DOWN value equals entryPrice (exact match)</small>
-                    </label>
+              </div>
+            </div>
+            <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+              <div class="border-b border-slate-200 dark:border-slate-700">
+                <nav class="flex px-6" aria-label="Tabs">
+                  <button type="button" data-tab="orders" class="tab-btn border-b-2 border-indigo-500 py-4 px-6 text-sm font-bold text-indigo-500">Orders</button>
+                  <button type="button" data-tab="history" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">History</button>
+                  <button type="button" data-tab="wallet" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">Wallet Info</button>
+                </nav>
+              </div>
+              <div class="p-6">
+                <div id="tab-orders" class="tab-panel">
+                  <div id="orders-section" class="flex flex-wrap items-center justify-between gap-4 mb-4">
+                    <button id="refresh-orders" type="button" class="px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-sm font-medium">Refresh Orders</button>
+                    <span id="orders-count" class="text-sm text-slate-500">Loading...</span>
                   </div>
-                  <div class="config-item">
-                    <label>
-                      Profit Target (0-100):
-                      <input type="number" id="profit-target-price" value="100" min="0" max="100" step="0.01" />
-                      <small>When active order's UP or DOWN value reaches this price, the order is sold</small>
-                    </label>
+                  <div id="orders-container" class="min-h-[100px]">Loading orders...</div>
+                </div>
+                <div id="tab-history" class="tab-panel hidden">
+                  <div id="trades-table-container"></div>
+                </div>
+                <div id="tab-wallet" class="tab-panel hidden">
+                  <div id="wallet-section" class="space-y-4">
+                    <div id="wallet-status-display-tab"></div>
+                    <div class="flex flex-wrap gap-2">
+                      <button id="connect-wallet" type="button" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium">Connect Wallet</button>
+                      <button id="initialize-session" type="button" class="px-4 py-2 bg-indigo-500 text-white rounded-lg text-sm font-medium disabled:opacity-50" disabled>Initialize Trading Session</button>
+                    </div>
+                    <div id="wallet-info" class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-4 space-y-2" style="display: none;">
+                      <div class="flex justify-between"><span class="text-slate-500 text-sm">EOA Address:</span><span id="eoa-address" class="font-mono text-xs break-all">--</span></div>
+                      <div class="flex justify-between"><span class="text-slate-500 text-sm">Proxy Address:</span><span id="proxy-address" class="font-mono text-xs break-all">--</span></div>
+                      <div id="balance-display" class="flex justify-between" style="display: none;"><span class="text-slate-500 text-sm">Balance:</span><span id="wallet-balance" class="font-mono text-sm">--</span></div>
+                    </div>
                   </div>
-                  <div class="config-item">
-                    <label>
-                      Stop Loss (0-100):
-                      <input type="number" id="stop-loss-price" value="91" min="0" max="100" step="0.01" />
-                      <small>When UP or DOWN value reaches this price, the order is sold</small>
-                    </label>
-                  </div>
-                <div class="config-item">
-                  <label>
-                    Trade Size (USD):
-                    <input type="number" id="trade-size" value="50" min="0" step="0.01" />
-                  </label>
                 </div>
-                <div class="config-item">
-                  <label>
-                    Price Difference (USD):
-                    <input type="number" id="price-difference" value="" min="0" step="0.01" placeholder="Optional" />
-                    <small>Only trade when |Price to Beat - Current BTC Price| &gt; this value. Leave empty to disable.</small>
-                  </label>
-                </div>
-                <div class="config-item">
-                  <label>
-                    Flip Guard – Pending distance (USD):
-                    <input type="number" id="flip-guard-pending-distance" value="15" min="0" step="0.5" />
-                    <small>Cancel pending entry bids when price distance drops below this.</small>
-                  </label>
-                </div>
-                <div class="config-item">
-                  <label>
-                    Flip Guard – Filled distance (USD):
-                    <input type="number" id="flip-guard-filled-distance" value="5" min="0" step="0.5" />
-                    <small>Emergency market sell when filled and price distance drops below this.</small>
-                  </label>
-                </div>
-                <div class="config-item">
-                  <label>
-                    Entry time remaining max (seconds):
-                    <input type="number" id="entry-time-remaining-max" value="180" min="0" step="30" />
-                    <small>Only enter when time left in event is less than this (e.g. 180 = 3 min).</small>
-                  </label>
-                </div>
-                <div class="config-item">
-                  <label>
-                    <small>Direction: Automatically determined (UP or DOWN, whichever reaches entry price first)</small>
-                  </label>
-                </div>
-              </div>
-              <div class="config-actions">
-                <button id="save-strategy" class="btn btn-primary">Save Strategy</button>
               </div>
             </div>
-            <div class="trading-status-panel">
-              <h3>Trading Status</h3>
-              <div id="trading-status-display"></div>
-              <div class="trading-actions">
-                <button id="start-trading" class="btn btn-primary">Start Trading</button>
-                <button id="stop-trading" class="btn btn-secondary">Stop Trading</button>
-                <button id="sell-all-btn" class="btn btn-secondary" title="Emergency: sell all positions at market">Sell all / Emergency</button>
-                <button id="clear-trades" class="btn btn-secondary">Clear Trades</button>
+            <div class="events-section border border-slate-200 dark:border-slate-700 rounded-2xl bg-white dark:bg-slate-800 overflow-hidden">
+              <div id="events-section-header" class="flex justify-between items-center px-6 py-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                <h2 class="font-bold text-slate-900 dark:text-white">BTC Up/Down 15m Events</h2>
+                <span id="events-chevron" class="text-indigo-500 font-bold">▶</span>
+              </div>
+              <div id="events-section-content" class="events-section-content collapsed overflow-x-auto">
+                <div id="events-error" class="px-6 py-2 text-sm text-red-600"></div>
+                <table class="w-full text-sm border-collapse">
+                  <thead><tr><th class="text-left p-2 border-b border-slate-200 dark:border-slate-700">Title</th><th class="text-left p-2 border-b">Start</th><th class="text-left p-2 border-b">End</th><th class="text-left p-2 border-b">Status</th><th class="text-left p-2 border-b">Price to Beat</th><th class="text-left p-2 border-b">Condition ID</th><th class="text-left p-2 border-b">Question ID</th><th class="text-left p-2 border-b">CLOB Token IDs</th><th class="text-left p-2 border-b">Slug</th></tr></thead>
+                  <tbody id="events-table-body"><tr><td colspan="9" class="p-4 text-center text-slate-500">Loading...</td></tr></tbody>
+                </table>
               </div>
             </div>
           </div>
-          <div class="trades-history">
-            <h3>Trade History</h3>
-            <div id="trades-table-container"></div>
-          </div>
-        </div>
 
-        <div class="info-section">
-          <h2>About</h2>
-          <p>This platform streams real-time BTC/USD price data from Polymarket's Real-Time Data Socket (RTDS).</p>
-          <p>The data is sourced from Chainlink oracle networks, providing reliable and accurate Bitcoin price information.</p>
+          <div class="xl:col-span-4 space-y-6">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+              <div class="p-5 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
+                <h3 class="font-bold flex items-center gap-2 text-slate-900 dark:text-white"><span class="material-icons-round text-indigo-500">settings</span> Strategy Config</h3>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" id="strategy-enabled" class="sr-only peer" />
+                  <div class="w-11 h-6 bg-slate-200 dark:bg-slate-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500"></div>
+                </label>
+              </div>
+              <div class="p-6 space-y-5">
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Entry Price (0-100)</label><input type="number" id="entry-price" value="96" min="0" max="100" step="0.01" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                  <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Profit Target</label><input type="number" id="profit-target-price" value="100" min="0" max="100" step="0.01" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Stop Loss</label><input type="number" id="stop-loss-price" value="91" min="0" max="100" step="0.01" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                  <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Trade Size (USD)</label><input type="number" id="trade-size" value="50" min="0" step="0.01" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                </div>
+                <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Price Difference (USD)</label><input type="number" id="price-difference" value="" min="0" step="0.01" placeholder="Optional" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Flip Guard Pending (USD)</label><input type="number" id="flip-guard-pending-distance" value="15" min="0" step="0.5" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                  <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Flip Guard Filled (USD)</label><input type="number" id="flip-guard-filled-distance" value="5" min="0" step="0.5" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                </div>
+                <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Entry time remaining max (s)</label><input type="number" id="entry-time-remaining-max" value="180" min="0" step="30" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                <button id="save-strategy" type="button" class="w-full bg-indigo-500 text-white font-bold py-3 rounded-xl hover:bg-indigo-600 transition-colors shadow-lg">Save Strategy</button>
+                <div class="grid grid-cols-2 gap-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                  <button id="start-trading" type="button" class="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-bold py-2 rounded-lg text-sm flex items-center justify-center gap-1"><span class="material-icons-round text-sm">play_arrow</span> Start</button>
+                  <button id="stop-trading" type="button" class="bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 font-bold py-2 rounded-lg text-sm flex items-center justify-center gap-1"><span class="material-icons-round text-sm">stop</span> Stop</button>
+                </div>
+                <button id="sell-all-btn" type="button" class="w-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold py-2 rounded-lg text-sm">Sell all / Emergency</button>
+                <button id="clear-trades" type="button" class="w-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold py-2 rounded-lg text-sm">Clear Current Trades</button>
+              </div>
+            </div>
+            <div class="bg-slate-100 dark:bg-slate-800/50 rounded-2xl p-6 border border-slate-200 dark:border-slate-700">
+              <h4 class="text-sm font-bold mb-2 text-slate-900 dark:text-white">About Platform</h4>
+              <p class="text-xs text-slate-500 leading-relaxed">This platform streams real-time BTC/USD price data from Polymarket's Real-Time Data Socket (RTDS). Data is sourced via Chainlink oracle networks for reliable settlement.</p>
+            </div>
+          </div>
         </div>
-      </div>
+      </main>
+
+      <footer class="max-w-7xl mx-auto px-4 py-12 border-t border-slate-200 dark:border-slate-800 mt-12">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+          <div class="space-y-2"><p class="text-[10px] font-bold text-slate-400 uppercase">Condition ID</p><p id="footer-condition-id" class="text-[11px] font-mono break-all text-slate-500">--</p></div>
+          <div class="space-y-2"><p class="text-[10px] font-bold text-slate-400 uppercase">Question ID</p><p id="footer-question-id" class="text-[11px] font-mono break-all text-slate-500">--</p></div>
+          <div class="space-y-2"><p class="text-[10px] font-bold text-slate-400 uppercase">Proxy Address</p><p id="footer-proxy" class="text-[11px] font-mono break-all text-slate-500">--</p></div>
+          <div class="space-y-2"><p class="text-[10px] font-bold text-slate-400 uppercase">Status</p><div class="flex items-center gap-2"><span id="connection-status" class="text-slate-500 text-[11px]">Disconnected</span><button id="connect" type="button" class="text-xs text-indigo-500 hover:underline">Connect</button><button id="disconnect" type="button" class="text-xs text-slate-500 hover:underline">Disconnect</button></div></div>
+        </div>
+      </footer>
+
+      <button type="button" data-dark-toggle class="fixed bottom-6 right-6 p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full shadow-xl hover:scale-110 transition-transform" aria-label="Toggle dark mode">
+        <span class="material-icons-round block dark:hidden">dark_mode</span>
+        <span class="material-icons-round hidden dark:block">light_mode</span>
+      </button>
     `;
+
+    this.setupTabListeners();
+    this.renderPriceLineChart();
+  }
+
+  private setupTabListeners(): void {
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const panels = document.querySelectorAll('.tab-panel');
+    tabBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tab = (btn as HTMLElement).getAttribute('data-tab');
+        tabBtns.forEach((b) => {
+          b.classList.remove('border-indigo-500', 'text-indigo-500', 'font-bold');
+          b.classList.add('border-transparent', 'text-slate-500', 'font-medium');
+        });
+        btn.classList.add('border-indigo-500', 'text-indigo-500', 'font-bold');
+        btn.classList.remove('border-transparent', 'text-slate-500');
+        panels.forEach((panel) => {
+          const id = panel.getAttribute('id');
+          if (id === `tab-${tab}`) {
+            panel.classList.remove('hidden');
+          } else {
+            panel.classList.add('hidden');
+          }
+        });
+      });
+    });
+  }
+
+  private renderPriceLineChart(): void {
+    const canvas = document.getElementById('price-line-chart') as HTMLCanvasElement | null;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const events = this.eventManager.getEvents();
+    const activeEvent = events.find((e) => e.status === 'active');
+    const priceToBeat = activeEvent ? this.eventPriceToBeat.get(activeEvent.slug) : undefined;
+
+    const slice = this.priceHistory.slice(-60);
+    const labels = slice.length > 0
+      ? slice.map((d) => new Date(d.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }))
+      : [''];
+    const data = slice.length > 0 ? slice.map((d) => d.value) : [0];
+
+    // Y-axis range: include all price data and the target (price to beat) so both the orange line and target line are visible
+    const dataMin = data.length > 0 ? Math.min(...data) : 0;
+    const dataMax = data.length > 0 ? Math.max(...data) : 100;
+    let yMin = dataMin;
+    let yMax = dataMax;
+    if (priceToBeat != null && priceToBeat > 0) {
+      yMin = Math.min(yMin, priceToBeat);
+      yMax = Math.max(yMax, priceToBeat);
+    }
+    const padding = Math.max(25, (yMax - yMin) * 0.05);
+    const suggestedMin = yMin - padding;
+    const suggestedMax = yMax + padding;
+
+    const isDark = document.documentElement.classList.contains('dark');
+    const gridColor = isDark ? 'rgba(148, 163, 184, 0.15)' : 'rgba(148, 163, 184, 0.2)';
+    const textColor = isDark ? '#94a3b8' : '#64748b';
+
+    const annotation: Record<string, unknown> = {};
+    if (priceToBeat != null && priceToBeat > 0) {
+      annotation.targetLine = {
+        type: 'line',
+        scaleID: 'y',
+        yMin: priceToBeat,
+        yMax: priceToBeat,
+        borderColor: '#64748b',
+        borderWidth: 2,
+        borderDash: [6, 4],
+        label: {
+          display: true,
+          content: 'Target',
+          position: 'end',
+          backgroundColor: 'rgba(100, 116, 139, 0.9)',
+          color: '#fff',
+          font: { size: 11, weight: '600' },
+        },
+      };
+    }
+
+    if (this.priceChart) {
+      this.priceChart.data.labels = labels;
+      this.priceChart.data.datasets[0].data = data;
+      const opts = this.priceChart.options.plugins?.annotation as { annotations?: Record<string, unknown> } | undefined;
+      if (opts) opts.annotations = annotation;
+      // Update Y scale so axis matches current price range (and includes target)
+      const yScale = this.priceChart.options.scales?.y as { min?: number; max?: number; suggestedMin?: number; suggestedMax?: number } | undefined;
+      if (yScale) {
+        yScale.min = suggestedMin;
+        yScale.max = suggestedMax;
+      }
+      this.priceChart.update('none');
+      return;
+    }
+
+    const chartConfig = {
+      type: 'line' as const,
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'BTC Price',
+            data,
+            borderColor: '#f97316',
+            backgroundColor: 'rgba(249, 115, 22, 0.08)',
+            fill: true,
+            tension: 0.2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' as const },
+        plugins: {
+          legend: { display: false },
+          annotation: { annotations: annotation },
+        },
+        scales: {
+          x: {
+            grid: { color: gridColor },
+            ticks: { maxTicksLimit: 6, color: textColor, font: { size: 10 } },
+          },
+          y: {
+            position: 'right' as const,
+            grid: { color: gridColor },
+            suggestedMin,
+            suggestedMax,
+            ticks: {
+              color: textColor,
+              font: { size: 10 },
+              callback: (value: string | number) => (typeof value === 'number' ? `$${value.toLocaleString()}` : value),
+            },
+          },
+        },
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.priceChart = new Chart(ctx, chartConfig as any);
   }
 
   private updateTradingManager(): void {
@@ -1041,69 +1143,36 @@ export class StreamingPlatform {
     // Update trading status display
     const statusDisplay = document.getElementById('trading-status-display');
     if (statusDisplay) {
-      const positions = status.positions || [];
-      const totalPositionSize = positions.reduce((sum, p) => sum + p.size, 0);
-      const totalUnrealizedProfit = positions.reduce((sum, p) => sum + (p.unrealizedProfit || 0), 0);
-      
-      const positionInfo = positions.length > 0
-        ? `
-          <div class="position-info">
-            <h4>Open Positions (${positions.length})</h4>
-            <div style="margin-bottom: 15px; padding: 10px; background-color: #f5f5f5; border-radius: 4px;">
-              <div style="font-weight: bold; margin-bottom: 8px; font-size: 1.1em;">Cumulative Summary</div>
-              <div><strong>Total Position Size:</strong> $${totalPositionSize.toFixed(2)}</div>
-              ${status.maxPositionSize !== undefined ? `<div><strong>Max Position Size:</strong> $${status.maxPositionSize.toFixed(2)} (50% of balance)</div>` : ''}
-              ${totalUnrealizedProfit !== undefined ? `<div class="${totalUnrealizedProfit >= 0 ? 'profit' : 'loss'}" style="margin-top: 5px;"><strong>Total Unrealized P/L:</strong> $${totalUnrealizedProfit.toFixed(2)}</div>` : ''}
-            </div>
-            ${positions.map((position, index) => `
-              <div class="position-details" style="margin-bottom: 15px; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                <div style="font-weight: bold; margin-bottom: 8px;">Position ${index + 1} of ${positions.length}</div>
-                <div><strong>Event:</strong> ${position.eventSlug}</div>
-                <div><strong>Direction:</strong> ${position.direction || 'N/A'}</div>
-                <div><strong>Side:</strong> ${position.side}</div>
-                <div><strong>Entry Price:</strong> ${position.entryPrice.toFixed(2)}</div>
-                <div><strong>Size:</strong> $${position.size.toFixed(2)}</div>
-                ${position.currentPrice !== undefined ? `<div><strong>Current Price:</strong> ${position.currentPrice.toFixed(2)}</div>` : '<div><strong>Current Price:</strong> <em>Updating...</em></div>'}
-                ${position.unrealizedProfit !== undefined ? `<div class="${position.unrealizedProfit >= 0 ? 'profit' : 'loss'}"><strong>Unrealized P/L:</strong> $${position.unrealizedProfit.toFixed(2)}</div>` : ''}
-              </div>
-            `).join('')}
-          </div>
-        `
-        : '<div class="no-position">No open positions</div>';
-
+      const winRate = status.totalTrades > 0 ? ((status.successfulTrades / status.totalTrades) * 100).toFixed(0) : '0';
+      const profitClass = status.totalProfit >= 0 ? 'text-emerald-500' : 'text-red-500';
       statusDisplay.innerHTML = `
-        <div class="status-summary">
-          <div class="status-item">
-            <span class="status-label">Trading Status:</span>
-            <span class="${status.isActive ? 'status-active' : 'status-inactive'}">
-              ${status.isActive ? 'ACTIVE' : 'INACTIVE'}
-            </span>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-xl">
+            <p class="text-xs text-slate-500">Total Profit</p>
+            <p class="text-xl font-bold ${profitClass}">$${status.totalProfit.toFixed(2)}</p>
           </div>
-          <div class="status-item">
-            <span class="status-label">Total Trades:</span>
-            <span class="status-value">${status.totalTrades}</span>
+          <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-xl">
+            <p class="text-xs text-slate-500">Win Rate</p>
+            <p class="text-xl font-bold">${winRate}%</p>
           </div>
-          <div class="status-item">
-            <span class="status-label">Successful:</span>
-            <span class="status-value success">${status.successfulTrades}</span>
+          <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-xl">
+            <p class="text-xs text-slate-500">Total Trades</p>
+            <p class="text-xl font-bold">${status.totalTrades}</p>
           </div>
-          <div class="status-item">
-            <span class="status-label">Failed:</span>
-            <span class="status-value failed">${status.failedTrades}</span>
-          </div>
-          <div class="status-item">
-            <span class="status-label">Total Profit:</span>
-            <span class="status-value ${status.totalProfit >= 0 ? 'profit' : 'loss'}">
-              $${status.totalProfit.toFixed(2)}
-            </span>
-          </div>
-          <div class="status-item">
-            <span class="status-label">Pending Orders:</span>
-            <span class="status-value">${status.pendingLimitOrders}</span>
+          <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-xl">
+            <p class="text-xs text-slate-500">Pending</p>
+            <p class="text-xl font-bold">${status.pendingLimitOrders}</p>
           </div>
         </div>
-        ${positionInfo}
       `;
+
+      const badgeEl = document.getElementById('trading-status-badge');
+      if (badgeEl) {
+        badgeEl.innerHTML = status.isActive
+          ? '<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span class="text-emerald-500">ACTIVE</span>'
+          : '<span class="w-2 h-2 rounded-full bg-slate-400"></span><span class="text-slate-500">INACTIVE</span>';
+        badgeEl.className = `flex items-center gap-1.5 font-bold text-sm ${status.isActive ? 'text-emerald-500' : 'text-slate-500'}`;
+      }
     }
 
     // Update trades table
@@ -1355,6 +1424,15 @@ export class StreamingPlatform {
     }
   }
 
+  private updateFooterIds(conditionId: string, questionId: string, proxy: string): void {
+    const condEl = document.getElementById('footer-condition-id');
+    const qEl = document.getElementById('footer-question-id');
+    const proxyEl = document.getElementById('footer-proxy');
+    if (condEl) condEl.textContent = conditionId || '--';
+    if (qEl) qEl.textContent = questionId || '--';
+    if (proxyEl) proxyEl.textContent = proxy || this.walletState.proxyAddress || '--';
+  }
+
   private renderWalletSection(): void {
     const statusDisplay = document.getElementById('wallet-status-display');
     const walletInfo = document.getElementById('wallet-info');
@@ -1368,20 +1446,15 @@ export class StreamingPlatform {
 
     if (statusDisplay) {
       let statusHtml = '';
-      
       if (this.walletState.isLoading) {
-        statusHtml = '<div class="wallet-status-loading">Loading...</div>';
+        statusHtml = '<span class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 text-xs font-semibold">Loading...</span>';
       } else if (this.walletState.error) {
-        statusHtml = `<div class="wallet-status-error">Error: ${this.walletState.error}</div>`;
+        statusHtml = `<span class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-xs font-semibold">Error: ${this.walletState.error}</span>`;
       } else if (this.walletState.isConnected) {
-        statusHtml = '<div class="wallet-status-connected">Wallet Connected</div>';
-        if (this.walletState.isInitialized) {
-          statusHtml += '<div class="wallet-status-initialized">Trading Session Initialized</div>';
-        }
+        statusHtml = '<span class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold"><span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span></span> WALLET CONNECTED</span>';
       } else {
-        statusHtml = '<div class="wallet-status-disconnected">Wallet Not Connected</div>';
+        statusHtml = '<span class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-semibold">Wallet Not Connected</span>';
       }
-
       statusDisplay.innerHTML = statusHtml;
     }
 
@@ -1445,6 +1518,9 @@ export class StreamingPlatform {
     } else if (walletInfo) {
       walletInfo.style.display = 'none';
     }
+
+    const footerProxy = document.getElementById('footer-proxy');
+    if (footerProxy) footerProxy.textContent = this.walletState.proxyAddress || '--';
   }
 
   /**

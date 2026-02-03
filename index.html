@@ -3,12 +3,50 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Polymarket 15m Trading</title>
+  <title>CryptoDash - BTC/USD Streaming Platform</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: '#6366f1',
+            'background-light': '#f8fafc',
+            'background-dark': '#0f172a',
+            'card-light': '#ffffff',
+            'card-dark': '#1e293b',
+            'accent-purple': '#7c3aed',
+            'accent-green': '#10b981',
+            'accent-red': '#ef4444',
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          borderRadius: { DEFAULT: '0.75rem' },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .price-chart-gradient { background: linear-gradient(180deg, rgba(99, 102, 241, 0.06) 0%, rgba(99, 102, 241, 0) 100%); }
+    #price-chart-wrapper { position: relative; width: 100%; height: 160px; min-height: 160px; }
+    .events-section-content.collapsed { max-height: 0; opacity: 0; overflow: hidden; }
+    .events-section-content { transition: max-height 0.3s ease, opacity 0.3s ease; max-height: 70vh; }
+  </style>
 </head>
-<body>
+<body class="bg-white dark:bg-black text-slate-900 dark:text-slate-100 transition-colors duration-200">
   <div id="app"></div>
   <script type="module" src="/src/main.ts"></script>
+  <script>
+    document.getElementById('app')?.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-dark-toggle]');
+      if (btn) document.documentElement.classList.toggle('dark');
+    });
+  </script>
 </body>
 </html>
-
-
