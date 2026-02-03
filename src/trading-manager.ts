@@ -367,17 +367,23 @@ export class TradingManager {
       return; // Don't check entry conditions if order is being placed
     }
 
-    // Price Difference: only enter when actual price distance is GREATER than the input value
+    // Price Difference: only enter when |current BTC price - price to beat| >= configured value (USD)
     if (this.strategyConfig.priceDifference != null) {
       if (this.currentPrice === null || this.priceToBeat === null) return;
       const priceDiffUSD = this.getPriceDistanceUSD()!;
-      if (priceDiffUSD <= this.strategyConfig.priceDifference) return;
+      if (priceDiffUSD < this.strategyConfig.priceDifference) {
+        console.log(`[TradingManager] Entry skipped: price diff $${priceDiffUSD.toFixed(2)} < required $${this.strategyConfig.priceDifference} (need diff >= $${this.strategyConfig.priceDifference} to enter)`);
+        return;
+      }
     }
 
     // Entry only when time remaining is less than configured max (default 3 min)
     const timeRemaining = this.getTimeRemainingSeconds();
     const maxTimeRemaining = this.getEntryTimeRemainingMaxSeconds();
     if (timeRemaining === null || timeRemaining >= maxTimeRemaining) {
+      if (timeRemaining !== null) {
+        console.log(`[TradingManager] Entry skipped: time remaining ${timeRemaining.toFixed(0)}s >= max ${maxTimeRemaining}s (enter only in last ${maxTimeRemaining}s)`);
+      }
       return;
     }
 
@@ -401,32 +407,47 @@ export class TradingManager {
       return;
     }
 
-    // Entry: POST_ONLY limit order at entry-1 when up/down crosses entry, time < 3 min, price diff > input
+    // Entry: POST_ONLY limit order at entryPrice when up/down crosses entry, time < 3 min, price diff > input
     await this.checkAndPlaceLimitOrder(yesTokenId, noTokenId);
   }
 
   /**
-   * Entry: POST_ONLY limit order at entry-1 when up/down crosses entry, time < 3 min, price diff > input.
+   * Entry: POST_ONLY limit order at entryPrice when up/down crosses entry, time < 3 min, price diff > input.
    * Fee Guard: only POST_ONLY limit orders for entry (no taker fee).
    */
   private async checkAndPlaceLimitOrder(yesTokenId: string, noTokenId: string): Promise<void> {
     try {
-      if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES) return;
-      if (!this.browserClobClient) return;
+      if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES) {
+        console.warn(`[TradingManager] Entry skipped: consecutive failures ${this.consecutiveFailures} >= ${this.MAX_CONSECUTIVE_FAILURES} (circuit breaker)`);
+        return;
+      }
+      if (!this.browserClobClient) {
+        console.warn('[TradingManager] Entry skipped: browser ClobClient not initialized (cannot place orders)');
+        return;
+      }
       if (this.isPlacingOrder || this.isPlacingSplitOrders) return;
 
       const activePositions = this.getActivePositions();
       const totalPositionSize = activePositions.reduce((sum, p) => sum + p.size, 0);
       const tradeSize = this.strategyConfig.tradeSize;
-      if (this.status.maxPositionSize && totalPositionSize >= this.status.maxPositionSize) return;
-      if (this.status.maxPositionSize && (totalPositionSize + tradeSize) > this.status.maxPositionSize) return;
+      if (this.status.maxPositionSize && totalPositionSize >= this.status.maxPositionSize) {
+        console.log(`[TradingManager] Entry skipped: at max position size (${totalPositionSize.toFixed(0)} >= ${this.status.maxPositionSize})`);
+        return;
+      }
+      if (this.status.maxPositionSize && (totalPositionSize + tradeSize) > this.status.maxPositionSize) {
+        console.log(`[TradingManager] Entry skipped: next trade would exceed max position size`);
+        return;
+      }
 
       const entryPrice = this.strategyConfig.entryPrice;
       const [yesPrice, noPrice] = await Promise.all([
         this.clobClient.getPrice(yesTokenId, 'BUY'),
         this.clobClient.getPrice(noTokenId, 'BUY'),
       ]);
-      if (!yesPrice || !noPrice) return;
+      if (!yesPrice || !noPrice) {
+        console.warn('[TradingManager] Entry skipped: price fetch failed (yesPrice=' + (yesPrice != null) + ', noPrice=' + (noPrice != null) + ')');
+        return;
+      }
 
       const yesPricePercent = toPercentage(yesPrice);
       const noPricePercent = toPercentage(noPrice);
@@ -445,16 +466,23 @@ export class TradingManager {
           const currentPrice = yesPricePercent >= noPricePercent ? yesPricePercent : noPricePercent;
           if (currentPrice < entryPrice - tolerance) this.priceBelowEntry = true;
         }
+        console.log(`[TradingManager] Entry skipped: price not in entry band (UP=${yesPricePercent.toFixed(2)}, DOWN=${noPricePercent.toFixed(2)}, entry=${entryPrice}±${tolerance})`);
         return;
       }
 
       if (activePositions.length > 0) {
-        if (!this.priceBelowEntry) return;
+        if (!this.priceBelowEntry) {
+          console.log('[TradingManager] Entry skipped: have positions, waiting for price to go below entry before adding');
+          return;
+        }
         this.priceBelowEntry = false;
       }
 
       if (!tokenToTrade || !direction) return;
-      if (!this.verifyBalance(tradeSize)) return;
+      if (!this.verifyBalance(tradeSize)) {
+        console.warn(`[TradingManager] Entry skipped: insufficient balance for trade size $${tradeSize}`);
+        return;
+      }
 
       this.isPlacingOrder = true;
       this.orderPlacementStartTime = Date.now();
@@ -465,13 +493,14 @@ export class TradingManager {
             orderId: result.orderId,
             direction,
             size: tradeSize,
-            limitPrice: entryPrice - 1,
+            limitPrice: entryPrice,
             placedAt: Date.now(),
           });
           this.consecutiveFailures = 0;
-          console.log(`[TradingManager] POST_ONLY limit entry placed at ${(entryPrice - 1).toFixed(2)} (${direction}), orderId: ${result.orderId.substring(0, 8)}...`);
+          console.log(`[TradingManager] POST_ONLY limit entry placed at ${entryPrice.toFixed(2)} (${direction}), orderId: ${result.orderId.substring(0, 8)}...`);
         } else {
           this.consecutiveFailures++;
+          console.warn('[TradingManager] Entry order placement failed:', result?.error || 'No order ID returned');
         }
       } finally {
         this.isPlacingOrder = false;
@@ -485,7 +514,7 @@ export class TradingManager {
     }
   }
 
-  /** Place a single POST_ONLY limit BUY at entry-1 (Fee Guard: maker-only, no taker fee). */
+  /** Place a single POST_ONLY limit BUY at entryPrice (Fee Guard: maker-only, no taker fee). */
   private async placePostOnlyEntryLimitOrder(
     tokenId: string,
     entryPrice: number,
@@ -493,7 +522,7 @@ export class TradingManager {
     direction: 'UP' | 'DOWN'
   ): Promise<{ orderId?: string; error?: string }> {
     if (!this.browserClobClient || !this.apiCredentials) return { error: 'No client or credentials' };
-    const limitPricePercent = Math.max(0, entryPrice - 1);
+    const limitPricePercent = Math.max(0, entryPrice);
     const limitPriceDecimal = limitPricePercent / 100;
     const sizeInShares = tradeSize / limitPriceDecimal;
 
@@ -616,10 +645,10 @@ export class TradingManager {
 
   /**
    * Legacy: Check both UP and DOWN tokens and place market order when price equals entry price.
-   * Kept for reference; entry now uses POST_ONLY limit at entry-1 via checkAndPlaceLimitOrder.
+   * Kept for reference; entry now uses POST_ONLY limit at entryPrice via checkAndPlaceLimitOrder.
    */
   private async _checkAndPlaceMarketOrder(_yesTokenId: string, _noTokenId: string): Promise<void> {
-    // Entry is now done via POST_ONLY limit at entry-1 (checkAndPlaceLimitOrder). Fee Guard: no market entry.
+    // Entry is now done via POST_ONLY limit at entryPrice (checkAndPlaceLimitOrder). Fee Guard: no market entry.
   }
 
   /**

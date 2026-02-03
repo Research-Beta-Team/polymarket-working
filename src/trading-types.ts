@@ -8,7 +8,7 @@ export interface StrategyConfig {
   stopLossPrice: number; // e.g., 91
   // Trade size (in USD)
   tradeSize: number;
-  // Price Difference (in USD) - Strategy only activates when |Price to Beat - Current BTC Price| > this value
+  // Price Difference (in USD) - Strategy only activates when |Price to Beat - Current BTC Price| >= this value
   priceDifference?: number | null;
   // Flip Guard: cancel pending entry bids when price distance (USD) drops below this
   flipGuardPendingDistanceUsd?: number; // default 15
