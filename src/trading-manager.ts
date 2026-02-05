@@ -379,6 +379,10 @@ export class TradingManager {
 
     const flipPending = this.getFlipGuardPendingDistanceUsd();
     const flipFilled = this.getFlipGuardFilledDistanceUsd();
+    // Flip Guard uses BTC price distance (|priceToBeat - current BTC price| in USD), not outcome token price.
+    if (activePositions.length > 0 && priceDistanceUSD === null) {
+      console.warn('[TradingManager] Flip Guard inactive: BTC currentPrice or priceToBeat not set — ensure updateMarketData(currentPrice, priceToBeat) is called (e.g. from active event UI).');
+    }
     // Flip Guard: If in entry position (pending bids) and price distance below threshold, cancel pending bids
     if (this.pendingEntryOrders.size > 0 && priceDistanceUSD !== null && priceDistanceUSD < flipPending) {
       console.log(`[TradingManager] 🔄 Flip Guard: Price distance $${priceDistanceUSD.toFixed(2)} < $${flipPending} — cancelling pending entry bids`);
@@ -1324,13 +1328,6 @@ export class TradingManager {
 
     if (activePositions.length === 0) return;
 
-    // If we have pending profit-target limit sells, check for fills before placing new exits
-    if (this.pendingProfitSellOrders.size > 0) {
-      await this.checkPendingProfitSellFills();
-      this.notifyStatusUpdate();
-      return;
-    }
-
     // Prevent multiple simultaneous exit orders
     // CRITICAL: Only check exit order flag, NOT entry order flags (entry orders shouldn't block exits!)
     if (this.isPlacingExitOrder) {
@@ -1364,20 +1361,24 @@ export class TradingManager {
         this.getPriceForToken(noTokenId, 'SELL'),
       ]);
 
-      if (!yesPrice || !noPrice) {
-        console.error(`[TradingManager] ❌ Failed to fetch prices for exit check:`, {
-          yesPrice: yesPrice || 'null',
-          noPrice: noPrice || 'null',
+      const useStalePrices = yesPrice == null || noPrice == null;
+      if (useStalePrices && !activePositions.some(p => p.currentPrice != null)) {
+        console.error(`[TradingManager] ❌ Failed to fetch prices for exit check (no stale price available):`, {
+          yesPrice: yesPrice ?? 'null',
+          noPrice: noPrice ?? 'null',
           yesTokenId: yesTokenId.substring(0, 10) + '...',
           noTokenId: noTokenId.substring(0, 10) + '...',
           activePositions: activePositions.length,
         });
         return;
       }
+      if (useStalePrices) {
+        console.warn(`[TradingManager] ⚠️ Using last-known position prices for exit check (API fetch failed). Stop loss may still trigger.`);
+      }
 
-      // Convert to percentage scale (0-100)
-      const yesPricePercent = toPercentage(yesPrice);
-      const noPricePercent = toPercentage(noPrice);
+      // Convert to percentage scale (0-100); use 0 when missing and we will use position.currentPrice per position below
+      const yesPricePercent = yesPrice != null ? toPercentage(yesPrice) : 0;
+      const noPricePercent = noPrice != null ? toPercentage(noPrice) : 0;
 
       const profitTarget = this.strategyConfig.profitTargetPrice;
       const stopLoss = this.strategyConfig.stopLossPrice;
@@ -1403,7 +1404,8 @@ export class TradingManager {
       // First, update all positions' current prices and unrealized P/L
       for (const position of activePositions) {
         const direction = position.direction || 'UP';
-        const currentPrice = direction === 'UP' ? yesPricePercent : noPricePercent;
+        const freshPrice = direction === 'UP' ? yesPricePercent : noPricePercent;
+        const currentPrice = (useStalePrices && position.currentPrice != null) ? position.currentPrice : freshPrice;
 
         // Update position current price and unrealized P/L
         position.currentPrice = currentPrice;
@@ -1411,14 +1413,13 @@ export class TradingManager {
         position.unrealizedProfit = (priceDiff / position.entryPrice) * position.size;
       }
 
-      // Then, check exit conditions for ALL positions using fresh prices
+      // Then, check exit conditions for ALL positions using fresh (or stale fallback) prices
       // Exit ALL positions if ANY position meets profit target or stop loss
       for (const position of activePositions) {
         const direction = position.direction || 'UP';
-        // Use fresh price from API for exit condition checking
-        const currentPrice = direction === 'UP' ? yesPricePercent : noPricePercent;
-        
-        // Also update position price with fresh data
+        const freshPrice = direction === 'UP' ? yesPricePercent : noPricePercent;
+        const currentPrice = (useStalePrices && position.currentPrice != null) ? position.currentPrice : freshPrice;
+
         position.currentPrice = currentPrice;
         const priceDiff = currentPrice - position.entryPrice;
         position.unrealizedProfit = (priceDiff / position.entryPrice) * position.size;
@@ -1535,6 +1536,9 @@ export class TradingManager {
           console.log(`[TradingManager] 🎯 Placing POST_ONLY limit sell at profit target ${profitTarget.toFixed(2)}...`);
           await this.placeProfitTargetLimitSells(activePositions, profitTarget);
         }
+      } else if (this.pendingProfitSellOrders.size > 0) {
+        // No exit triggered this cycle; check if any pending profit-target limit sells have filled
+        await this.checkPendingProfitSellFills();
       }
 
       this.notifyStatusUpdate();

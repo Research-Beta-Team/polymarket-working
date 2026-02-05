@@ -73,7 +73,8 @@ export class StreamingPlatform {
       this.renderTradingSection();
       // When any order is filled (buy or sell), refresh orders/positions list so UI stays in sync
       if (trade.status === 'filled') {
-        this.fetchAndDisplayOrders();
+        this.fetchAndDisplayPositions();
+        this.fetchAndDisplayOpenOrders();
       }
     });
     this.tradingManager.loadStrategyConfig();
@@ -172,7 +173,7 @@ export class StreamingPlatform {
         await this.tradingManager.closeAllPositionsManually('Manual Sell all / Emergency');
         this.renderTradingSection();
         await this.fetchBalance();
-        this.fetchAndDisplayOrders();
+        this.fetchAndDisplayPositions();
       } catch (e) {
         console.error('Sell all failed:', e);
         alert('Sell all failed: ' + (e instanceof Error ? e.message : String(e)));
@@ -193,10 +194,10 @@ export class StreamingPlatform {
       }
     });
 
-    // Orders section event listeners
-    const refreshOrdersBtn = document.getElementById('refresh-orders');
-    refreshOrdersBtn?.addEventListener('click', () => {
-      this.fetchAndDisplayOrders();
+    // Positions tab
+    const refreshPositionsBtn = document.getElementById('refresh-positions');
+    refreshPositionsBtn?.addEventListener('click', () => {
+      this.fetchAndDisplayPositions();
     });
     const refreshOpenOrdersBtn = document.getElementById('refresh-open-orders');
     refreshOpenOrdersBtn?.addEventListener('click', () => {
@@ -837,19 +838,19 @@ export class StreamingPlatform {
             <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
               <div class="border-b border-slate-200 dark:border-slate-700">
                 <nav class="flex px-6" aria-label="Tabs">
-                  <button type="button" data-tab="orders" class="tab-btn border-b-2 border-indigo-500 py-4 px-6 text-sm font-bold text-indigo-500">Orders</button>
+                  <button type="button" data-tab="positions" class="tab-btn border-b-2 border-indigo-500 py-4 px-6 text-sm font-bold text-indigo-500">Positions</button>
                   <button type="button" data-tab="open-orders" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">Open Orders</button>
                   <button type="button" data-tab="history" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">History</button>
                   <button type="button" data-tab="wallet" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">Wallet Info</button>
                 </nav>
               </div>
               <div class="p-6">
-                <div id="tab-orders" class="tab-panel">
-                  <div id="orders-section" class="flex flex-wrap items-center justify-between gap-4 mb-4">
-                    <button id="refresh-orders" type="button" class="px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-sm font-medium">Refresh Orders</button>
-                    <span id="orders-count" class="text-sm text-slate-500">Loading...</span>
+                <div id="tab-positions" class="tab-panel">
+                  <div id="positions-section" class="flex flex-wrap items-center justify-between gap-4 mb-4">
+                    <button id="refresh-positions" type="button" class="px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-sm font-medium">Refresh</button>
+                    <span id="positions-count" class="text-sm text-slate-500">Loading...</span>
                   </div>
-                  <div id="orders-container" class="min-h-[100px]">Loading orders...</div>
+                  <div id="positions-container" class="min-h-[100px]">Loading positions...</div>
                 </div>
                 <div id="tab-open-orders" class="tab-panel hidden">
                   <div id="open-orders-section" class="flex flex-wrap items-center justify-between gap-4 mb-4">
@@ -983,6 +984,9 @@ export class StreamingPlatform {
         });
         if (tab === 'open-orders') {
           this.fetchAndDisplayOpenOrders();
+        }
+        if (tab === 'positions') {
+          this.fetchAndDisplayPositions();
         }
       });
     });
@@ -1461,7 +1465,7 @@ export class StreamingPlatform {
       await this.fetchBalance();
 
       // Fetch orders once after initialization
-      this.fetchAndDisplayOrders();
+      this.fetchAndDisplayPositions();
       this.startOrdersRefreshInterval();
 
       this.renderWalletSection();
@@ -1611,8 +1615,8 @@ export class StreamingPlatform {
     this.stopOrdersRefreshInterval();
     const intervalMs = 20000; // 20 seconds
     this.ordersRefreshIntervalId = window.setInterval(() => {
-      if (this.walletState.isInitialized && this.walletState.apiCredentials) {
-        this.fetchAndDisplayOrders();
+      if (this.walletState.proxyAddress) {
+        this.fetchAndDisplayPositions();
       }
     }, intervalMs);
   }
@@ -1625,194 +1629,109 @@ export class StreamingPlatform {
   }
 
   /**
-   * Fetch and display active orders
+   * Fetch and display active positions from Polymarket Data API.
    */
-  private async fetchAndDisplayOrders(): Promise<void> {
-    if (!this.walletState.isInitialized || !this.walletState.apiCredentials || !this.walletState.proxyAddress) {
-      const ordersContainer = document.getElementById('orders-container');
-      const ordersCount = document.getElementById('orders-count');
-      if (ordersContainer) {
-        // Show not initialized state with table structure
-        ordersContainer.innerHTML = `
-          <table class="orders-table">
-            <thead>
-              <tr>
-                <th>Order ID</th>
-                <th>Token ID</th>
-                <th>Hash</th>
-                <th>Filled</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td colspan="7" class="orders-empty-cell">Wallet not initialized. Please initialize trading session first.</td></tr>
-            </tbody>
-          </table>
-        `;
+  private async fetchAndDisplayPositions(): Promise<void> {
+    const container = document.getElementById('positions-container');
+    const countEl = document.getElementById('positions-count');
+
+    if (!this.walletState.proxyAddress) {
+      if (container) {
+        container.innerHTML = `<p class="text-slate-500 text-sm">Connect wallet and initialize to see positions.</p>`;
       }
-      if (ordersCount) {
-        ordersCount.textContent = 'N/A';
-      }
+      if (countEl) countEl.textContent = '—';
       return;
     }
 
-    const ordersContainer = document.getElementById('orders-container');
-    const ordersCount = document.getElementById('orders-count');
-
-    if (ordersContainer) {
-      // Show loading state with table structure
-      ordersContainer.innerHTML = `
-          <table class="orders-table">
-            <thead>
-              <tr>
-                <th>Order ID</th>
-                <th>Token ID</th>
-                <th>Hash</th>
-                <th>Filled</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td colspan="7" class="orders-loading-cell">Loading orders...</td></tr>
-          </tbody>
-        </table>
-      `;
+    if (container) {
+      container.innerHTML = `<p class="text-slate-500 text-sm">Loading positions...</p>`;
     }
+    if (countEl) countEl.textContent = 'Loading...';
 
     try {
-      console.log('[Orders] Fetching active orders...');
-      
       const response = await fetch(
-        `/api/orders?apiCredentials=${encodeURIComponent(JSON.stringify(this.walletState.apiCredentials))}&proxyAddress=${encodeURIComponent(this.walletState.proxyAddress)}`
+        `/api/positions?proxyAddress=${encodeURIComponent(this.walletState.proxyAddress)}`
       );
-
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch orders');
+        throw new Error(data.error || 'Failed to fetch positions');
       }
 
-      const orders = data.orders || [];
-      console.log('[Orders] Fetched orders:', orders.length);
+      const positions: any[] = data.positions || [];
+      console.log('[Positions] Fetched:', positions.length);
 
-      const liveOrders = orders.filter((o: any) => o.status === 'LIVE').length;
-      const filledOrders = orders.filter((o: any) =>
-        o.status === 'FILLED' || o.status === 'EXECUTED' || o.status === 'CLOSED'
-      ).length;
-
-      if (ordersCount) {
-        ordersCount.textContent = orders.length === 0
-          ? 'No orders'
-          : `${orders.length} order${orders.length !== 1 ? 's' : ''} (${liveOrders} live, ${filledOrders} filled)`;
+      if (countEl) {
+        countEl.textContent = positions.length === 0
+          ? 'No positions'
+          : `${positions.length} position${positions.length !== 1 ? 's' : ''}`;
       }
 
-      if (ordersContainer) {
-        const orderRows =
-          orders.length === 0
-            ? '<tr><td colspan="7" class="orders-empty-cell">No orders</td></tr>'
-            : orders.map((order: any) => {
-                    const orderStatus = (order.status || 'UNKNOWN').toUpperCase();
-                    const isFilled = orderStatus === 'FILLED' || orderStatus === 'EXECUTED' || orderStatus === 'CLOSED';
-                    const isLive = orderStatus === 'LIVE';
-                    const rowClass = isFilled ? 'order-row order-filled' : isLive ? 'order-row order-live' : 'order-row';
-                    const fillPercentage = order.original_size > 0 
-                      ? ((order.size_matched || 0) / order.original_size * 100).toFixed(1)
-                      : '0.0';
-                    
-                    return `
-                      <tr class="${rowClass}" data-order-id="${order.id}">
-                        <td class="order-id">${order.id ? order.id.substring(0, 8) + '...' : '--'}</td>
-                        <td class="token-id">${order.asset_id ? order.asset_id.substring(0, 10) + '...' : order.token_id ? order.token_id.substring(0, 10) + '...' : '--'}</td>
-                        <td>${(order.transaction_hash || order.hash || order.id || '--').substring(0, 16)}${(order.transaction_hash || order.hash || order.id || '').length > 16 ? '...' : ''}</td>
-                        <td>${parseFloat(order.size_matched || order.filled_size || 0).toFixed(2)} (${fillPercentage}%)</td>
-                        <td><span class="status-badge status-${orderStatus.toLowerCase()}">${order.status || 'UNKNOWN'}</span></td>
-                        <td>${order.created_at ? new Date(order.created_at * 1000).toLocaleString() : order.created_at_iso || '--'}</td>
-                        <td>
-                          ${isLive 
-                            ? `<button class="btn-cancel-order" data-order-id="${order.id}">Cancel</button>`
-                            : isFilled && order.side === 'BUY'
-                            ? `<button class="btn-sell-order" 
-                                 data-order-id="${order.id}" 
-                                 data-token-id="${order.asset_id || order.token_id || ''}" 
-                                 data-size="${order.size_matched || order.filled_size || order.original_size || order.size || 0}"
-                                 data-price="${order.price || 0}">Sell</button>`
-                            : '--'
-                          }
-                        </td>
-                      </tr>
-                    `;
-                  }).join('');
+      if (container) {
+        if (positions.length === 0) {
+          container.innerHTML = `<p class="text-slate-500 text-sm">No active positions on Polymarket.</p>`;
+          return;
+        }
 
-        ordersContainer.innerHTML = `
-          <table class="orders-table">
-            <thead>
-              <tr>
-                <th>Order ID</th>
-                <th>Token ID</th>
-                <th>Hash</th>
-                <th>Filled</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>${orderRows}</tbody>
-          </table>
+        const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const pnlClass = (pnl: number) => (pnl >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400');
+        const rows = positions.map((p: any) => {
+          const size = Number(p.size ?? 0);
+          const avgPrice = Number(p.avgPrice ?? 0);
+          const curPrice = Number(p.curPrice ?? 0);
+          const currentValue = Number(p.currentValue ?? 0);
+          const cashPnl = Number(p.cashPnl ?? 0);
+          const percentPnl = Number(p.percentPnl ?? 0);
+          const title = (p.title || p.slug || p.eventSlug || '—').toString().slice(0, 40);
+          const outcome = (p.outcome || '—').toString();
+          const eventSlug = (p.eventSlug || '—').toString();
+          // Data API prices are typically 0-1 decimal; display as 0-100
+          const avgPct = avgPrice <= 1 && avgPrice >= 0 ? avgPrice * 100 : avgPrice;
+          const curPct = curPrice <= 1 && curPrice >= 0 ? curPrice * 100 : curPrice;
+
+          return `
+            <tr class="border-b border-slate-100 dark:border-slate-700/50">
+              <td class="py-2 pr-2 text-slate-700 dark:text-slate-300">${esc(title)}${title.length >= 40 ? '…' : ''}</td>
+              <td class="py-2 pr-2 font-medium">${esc(outcome)}</td>
+              <td class="py-2 pr-2 font-mono">${size.toFixed(2)}</td>
+              <td class="py-2 pr-2 font-mono">${avgPct.toFixed(2)}</td>
+              <td class="py-2 pr-2 font-mono">${curPct.toFixed(2)}</td>
+              <td class="py-2 pr-2 font-mono">$${currentValue.toFixed(2)}</td>
+              <td class="py-2 pr-2 font-mono ${pnlClass(cashPnl)}">$${cashPnl >= 0 ? '+' : ''}${cashPnl.toFixed(2)}</td>
+              <td class="py-2 pr-2 font-mono ${pnlClass(percentPnl)}">${percentPnl >= 0 ? '+' : ''}${percentPnl.toFixed(1)}%</td>
+              <td class="py-2 pr-2 text-slate-500 text-xs">${esc(eventSlug)}</td>
+            </tr>
+          `;
+        }).join('');
+
+        container.innerHTML = `
+          <p class="text-slate-500 text-xs mb-2">Active positions from Polymarket (by proxy wallet).</p>
+          <div class="overflow-x-auto">
+            <table class="orders-table w-full border-collapse text-sm">
+              <thead>
+                <tr class="border-b border-slate-200 dark:border-slate-700">
+                  <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Market</th>
+                  <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Outcome</th>
+                  <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Size</th>
+                  <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Avg price</th>
+                  <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Cur price</th>
+                  <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Value</th>
+                  <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">P&amp;L</th>
+                  <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">% P&amp;L</th>
+                  <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Event</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
         `;
-
-        const cancelButtons = ordersContainer.querySelectorAll('.btn-cancel-order');
-        cancelButtons.forEach(btn => {
-          btn.addEventListener('click', async (e) => {
-            const orderId = (e.target as HTMLButtonElement).getAttribute('data-order-id');
-            if (orderId) await this.cancelOrder(orderId);
-          });
-        });
-
-        const sellButtons = ordersContainer.querySelectorAll('.btn-sell-order');
-        sellButtons.forEach(btn => {
-          btn.addEventListener('click', async (e) => {
-            const orderId = (e.target as HTMLButtonElement).getAttribute('data-order-id');
-            const tokenId = (e.target as HTMLButtonElement).getAttribute('data-token-id');
-            const size = (e.target as HTMLButtonElement).getAttribute('data-size');
-            const price = (e.target as HTMLButtonElement).getAttribute('data-price');
-            if (orderId && tokenId && size) {
-              await this.sellOrder(orderId, tokenId, parseFloat(size), parseFloat(price || '0'));
-            }
-          });
-        });
       }
     } catch (error) {
-      console.error('[Orders] Error fetching orders:', error);
-      if (ordersContainer) {
-        // Show error state with table structure
-        ordersContainer.innerHTML = `
-          <table class="orders-table">
-            <thead>
-              <tr>
-                <th>Order ID</th>
-                <th>Token ID</th>
-                <th>Side</th>
-                <th>Price</th>
-                <th>Size</th>
-                <th>Filled</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td colspan="9" class="orders-error-cell">Error loading orders: ${error instanceof Error ? error.message : 'Unknown error'}</td></tr>
-            </tbody>
-          </table>
-        `;
+      console.error('[Positions] Error:', error);
+      if (container) {
+        container.innerHTML = `<p class="text-red-600 text-sm">Error loading positions: ${error instanceof Error ? error.message : 'Unknown error'}</p>`;
       }
-      if (ordersCount) {
-        ordersCount.textContent = 'Error';
-      }
+      if (countEl) countEl.textContent = 'Error';
     }
   }
 
@@ -1947,7 +1866,7 @@ export class StreamingPlatform {
 
       console.log('[Orders] ✅ Order cancelled successfully:', orderId);
 
-      await this.fetchAndDisplayOrders();
+      await this.fetchAndDisplayPositions();
       await this.fetchAndDisplayOpenOrders();
     } catch (error) {
       console.error('[Orders] ❌ Error cancelling order:', error);
@@ -2043,7 +1962,8 @@ export class StreamingPlatform {
             alert(`Sell order placed successfully!\nOrder ID: ${response.orderID.substring(0, 8)}...`);
             
             // Refresh orders list
-            await this.fetchAndDisplayOrders();
+            await this.fetchAndDisplayPositions();
+            await this.fetchAndDisplayOpenOrders();
           } else {
             throw new Error('Order submission failed - no order ID returned');
           }
@@ -2078,7 +1998,8 @@ export class StreamingPlatform {
             alert(`Sell order placed successfully!\nOrder ID: ${data.orderId.substring(0, 8)}...`);
             
             // Refresh orders list
-            await this.fetchAndDisplayOrders();
+            await this.fetchAndDisplayPositions();
+            await this.fetchAndDisplayOpenOrders();
           } else {
             throw new Error(data.error || 'Order failed');
           }
