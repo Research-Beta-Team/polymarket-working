@@ -6,8 +6,10 @@ export interface StrategyConfig {
   profitTargetPrice: number; // e.g., 100
   // Stop loss price (0-100 scale)
   stopLossPrice: number; // e.g., 91
-  // Trade size (in USD)
+  // Trade size: amount in USD or in shares depending on tradeSizeUnit
   tradeSize: number;
+  // Unit for tradeSize: 'USD' (default) or 'shares'
+  tradeSizeUnit?: 'USD' | 'shares';
   // Price Difference (in USD) - Strategy only activates when |Price to Beat - Current BTC Price| >= this value
   priceDifference?: number | null;
   // Flip Guard: cancel pending entry bids when price distance (USD) drops below this

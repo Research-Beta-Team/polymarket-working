@@ -113,7 +113,7 @@ export class MultiAssetTradingManager {
   updateStrategyConfig(asset: AssetType, config: Partial<StrategyConfig>): void {
     const manager = this.managers.get(asset);
     if (manager) {
-      manager.updateStrategyConfig(config);
+      manager.setStrategyConfig(config);
     }
   }
 

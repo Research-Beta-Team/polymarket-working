@@ -698,8 +698,15 @@ export class MultiAssetStreamingPlatform {
         </div>
         <div class="config-item">
           <label>
-            Trade Size (USD):
-            <input type="number" id="trade-size" value="${config.tradeSize}" min="1" step="0.01">
+            Trade Size
+            <span class="text-slate-500 text-xs">(amount in USD or shares)</span>
+            <div class="flex gap-2 items-center mt-1">
+              <input type="number" id="trade-size" value="${config.tradeSize}" min="0" step="0.01" class="flex-1">
+              <select id="trade-size-unit" class="min-w-[80px]">
+                <option value="USD" ${(config.tradeSizeUnit ?? 'USD') === 'USD' ? 'selected' : ''}>USD</option>
+                <option value="shares" ${config.tradeSizeUnit === 'shares' ? 'selected' : ''}>Shares</option>
+              </select>
+            </div>
           </label>
         </div>
         <div class="config-item">
@@ -887,6 +894,7 @@ export class MultiAssetStreamingPlatform {
     const profitTarget = parseFloat((document.getElementById('profit-target') as HTMLInputElement)?.value || '99');
     const stopLoss = parseFloat((document.getElementById('stop-loss') as HTMLInputElement)?.value || '91');
     const tradeSize = parseFloat((document.getElementById('trade-size') as HTMLInputElement)?.value || '50');
+    const tradeSizeUnit = ((document.getElementById('trade-size-unit') as HTMLSelectElement)?.value || 'USD') as 'USD' | 'shares';
     const priceDifferenceInput = (document.getElementById('price-difference') as HTMLInputElement)?.value;
     const priceDifference = priceDifferenceInput && priceDifferenceInput.trim() !== '' 
       ? parseFloat(priceDifferenceInput) 
@@ -898,6 +906,7 @@ export class MultiAssetStreamingPlatform {
       profitTargetPrice: profitTarget,
       stopLossPrice: stopLoss,
       tradeSize,
+      tradeSizeUnit,
       priceDifference,
     });
 

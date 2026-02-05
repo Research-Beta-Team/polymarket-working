@@ -75,6 +75,23 @@ export class TradingManager {
     return this.strategyConfig.entryTimeRemainingMaxSeconds ?? 180;
   }
 
+  /** Price decimal 0–1. Returns trade size in USD (for balance, position cap, position.size). */
+  private getTradeSizeUSD(priceDecimal: number): number {
+    const unit = this.strategyConfig.tradeSizeUnit ?? 'USD';
+    const v = this.strategyConfig.tradeSize;
+    if (unit === 'shares') return v * priceDecimal;
+    return v;
+  }
+
+  /** Price decimal 0–1. Returns trade size in shares (for order size). */
+  private getTradeSizeShares(priceDecimal: number): number {
+    const unit = this.strategyConfig.tradeSizeUnit ?? 'USD';
+    const v = this.strategyConfig.tradeSize;
+    if (unit === 'shares') return v;
+    if (priceDecimal <= 0) return 0;
+    return v / priceDecimal;
+  }
+
   setStrategyConfig(config: Partial<StrategyConfig>): void {
     this.strategyConfig = { ...this.strategyConfig, ...config };
     this.saveStrategyConfig();
@@ -451,7 +468,9 @@ export class TradingManager {
 
       const activePositions = this.getActivePositions();
       const totalPositionSize = activePositions.reduce((sum, p) => sum + p.size, 0);
-      const tradeSize = this.strategyConfig.tradeSize;
+      const entryPrice = this.strategyConfig.entryPrice;
+      const limitPriceDecimal = Math.max(0, entryPrice - 1) / 100;
+      const tradeSizeUSD = this.getTradeSizeUSD(limitPriceDecimal);
       // Only enforce cap when we have a valid max (positive number); avoid blocking on stale or zero cap when there are no positions
       const maxPos = this.status.maxPositionSize;
       if (maxPos != null && maxPos > 0) {
@@ -459,13 +478,11 @@ export class TradingManager {
           console.log(`[TradingManager] Entry skipped: at max position size (${totalPositionSize.toFixed(0)} >= ${maxPos})`);
           return;
         }
-        if ((totalPositionSize + tradeSize) > maxPos) {
-          console.log(`[TradingManager] Entry skipped: next trade would exceed max position size (${totalPositionSize.toFixed(0)} + ${tradeSize} > ${maxPos})`);
+        if ((totalPositionSize + tradeSizeUSD) > maxPos) {
+          console.log(`[TradingManager] Entry skipped: next trade would exceed max position size (${totalPositionSize.toFixed(0)} + ${tradeSizeUSD.toFixed(2)} > ${maxPos})`);
           return;
         }
       }
-
-      const entryPrice = this.strategyConfig.entryPrice;
       const [yesPrice, noPrice] = await Promise.all([
         this.getPriceForToken(yesTokenId, 'BUY'),
         this.getPriceForToken(noTokenId, 'BUY'),
@@ -505,22 +522,23 @@ export class TradingManager {
       }
 
       if (!tokenToTrade || !direction) return;
-      if (!this.verifyBalance(tradeSize)) {
-        console.warn(`[TradingManager] Entry skipped: insufficient balance for trade size $${tradeSize}`);
+      if (!this.verifyBalance(tradeSizeUSD)) {
+        console.warn(`[TradingManager] Entry skipped: insufficient balance for trade size $${tradeSizeUSD.toFixed(2)}`);
         return;
       }
 
       const limitPrice = Math.max(0, entryPrice - 1);
-      console.log(`[TradingManager] Entry condition met: placing POST_ONLY limit BUY at ${limitPrice.toFixed(2)} (${direction}), size $${tradeSize}`);
+      const unit = this.strategyConfig.tradeSizeUnit ?? 'USD';
+      console.log(`[TradingManager] Entry condition met: placing POST_ONLY limit BUY at ${limitPrice.toFixed(2)} (${direction}), size ${unit === 'shares' ? this.getTradeSizeShares(limitPriceDecimal).toFixed(2) + ' shares' : '$' + tradeSizeUSD.toFixed(2)}`);
       this.isPlacingOrder = true;
       this.orderPlacementStartTime = Date.now();
       try {
-        const result = await this.placePostOnlyEntryLimitOrder(tokenToTrade, entryPrice, tradeSize, direction);
+        const result = await this.placePostOnlyEntryLimitOrder(tokenToTrade, entryPrice, direction);
         if (result?.orderId) {
           this.pendingEntryOrders.set(tokenToTrade, {
             orderId: result.orderId,
             direction,
-            size: tradeSize,
+            size: tradeSizeUSD,
             limitPrice,
             placedAt: Date.now(),
           });
@@ -546,13 +564,12 @@ export class TradingManager {
   private async placePostOnlyEntryLimitOrder(
     tokenId: string,
     entryPrice: number,
-    tradeSize: number,
     direction: 'UP' | 'DOWN'
   ): Promise<{ orderId?: string; error?: string }> {
     if (!this.browserClobClient || !this.apiCredentials) return { error: 'No client or credentials' };
     const limitPricePercent = Math.max(0, entryPrice - 1);
     const limitPriceDecimal = limitPricePercent / 100;
-    const sizeInShares = tradeSize / limitPriceDecimal;
+    const sizeInShares = this.getTradeSizeShares(limitPriceDecimal);
 
     try {
       let feeRateBps: number;
@@ -904,23 +921,24 @@ export class TradingManager {
     }
 
     try {
-      const tradeSize = this.strategyConfig.tradeSize;
-      
+      const entryPriceDecimal = entryPrice / 100;
+      const tradeSizeUSD = this.getTradeSizeUSD(entryPriceDecimal);
+
       // Verify balance before placing order
-      if (!this.verifyBalance(tradeSize)) {
+      if (!this.verifyBalance(tradeSizeUSD)) {
         console.error('[TradingManager] ❌ Order rejected: Insufficient balance');
         this.status.failedTrades++;
         return;
       }
-      
-      const orderSplits = this.calculateOrderSplits(tradeSize, entryPrice);
-      const isLargeOrder = tradeSize > 50;
+
+      const orderSplits = this.calculateOrderSplits(tradeSizeUSD, entryPrice);
+      const isLargeOrder = tradeSizeUSD > 50;
 
       console.log('[TradingManager] Placing market order:', {
         tokenId,
         direction,
         entryPrice,
-        tradeSize,
+        tradeSizeUSD: tradeSizeUSD.toFixed(2),
         isLargeOrder,
         numSplits: orderSplits.length,
         splits: orderSplits,
@@ -933,7 +951,7 @@ export class TradingManager {
           eventSlug: this.activeEvent!.slug,
           tokenId,
           side: 'BUY',
-          size: tradeSize,
+          size: tradeSizeUSD,
           price: entryPrice,
           timestamp: Date.now(),
           status: 'filled',
@@ -949,10 +967,10 @@ export class TradingManager {
           eventSlug: trade.eventSlug,
           tokenId: trade.tokenId,
           side: trade.side,
-          size: tradeSize,
+          size: tradeSizeUSD,
           entryPrice: entryPrice,
           direction,
-          filledOrders: [{ orderId: trade.transactionHash!, price: entryPrice, size: tradeSize, timestamp: Date.now() }],
+          filledOrders: [{ orderId: trade.transactionHash!, price: entryPrice, size: tradeSizeUSD, timestamp: Date.now() }],
           entryTimestamp: Date.now(),
         };
 
@@ -1057,7 +1075,7 @@ export class TradingManager {
         // Log partial or full success
         if (orderFailed) {
           console.warn(`[TradingManager] ⚠️ PARTIAL FILL: ${filledOrders.length} of ${orderSplits.length} orders filled. ${failedOrderCount} order(s) canceled due to failure.`);
-          console.warn(`[TradingManager] ⚠️ Position created with partial size: ${totalFilledSize.toFixed(2)} USDC instead of planned ${tradeSize.toFixed(2)} USDC`);
+          console.warn(`[TradingManager] ⚠️ Position created with partial size: ${totalFilledSize.toFixed(2)} USDC instead of planned ${tradeSizeUSD.toFixed(2)} USDC`);
         } else if (failedOrderCount > 0) {
           console.warn(`[TradingManager] ⚠️ Partial success: ${filledOrders.length} of ${orderSplits.length} orders filled. ${failedOrderCount} order(s) failed.`);
         }

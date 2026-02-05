@@ -890,7 +890,16 @@ export class StreamingPlatform {
                 </div>
                 <div class="grid grid-cols-2 gap-4">
                   <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Stop Loss</label><input type="number" id="stop-loss-price" value="91" min="0" max="100" step="0.01" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-                  <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Trade Size (USD)</label><input type="number" id="trade-size" value="50" min="0" step="0.01" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                  <div class="space-y-1.5">
+                  <label class="text-xs font-bold text-slate-500 uppercase">Trade Size</label>
+                  <div class="flex gap-2 items-center">
+                    <input type="number" id="trade-size" value="50" min="0" step="0.01" class="flex-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" />
+                    <select id="trade-size-unit" class="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm min-w-[80px]">
+                      <option value="USD">USD</option>
+                      <option value="shares">Shares</option>
+                    </select>
+                  </div>
+                </div>
                 </div>
                 <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Price Difference (USD)</label><input type="number" id="price-difference" value="" min="0" step="0.01" placeholder="Optional" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
                 <div class="grid grid-cols-2 gap-4">
@@ -1095,6 +1104,7 @@ export class StreamingPlatform {
     const profitTargetPrice = parseFloat((document.getElementById('profit-target-price') as HTMLInputElement)?.value || '100');
     const stopLossPrice = parseFloat((document.getElementById('stop-loss-price') as HTMLInputElement)?.value || '91');
     const tradeSize = parseFloat((document.getElementById('trade-size') as HTMLInputElement)?.value || '50');
+    const tradeSizeUnit = ((document.getElementById('trade-size-unit') as HTMLSelectElement)?.value || 'USD') as 'USD' | 'shares';
     const priceDifferenceInput = (document.getElementById('price-difference') as HTMLInputElement)?.value;
     const priceDifference = priceDifferenceInput && priceDifferenceInput.trim() !== ''
       ? parseFloat(priceDifferenceInput)
@@ -1109,6 +1119,7 @@ export class StreamingPlatform {
       profitTargetPrice,
       stopLossPrice,
       tradeSize,
+      tradeSizeUnit,
       priceDifference,
       flipGuardPendingDistanceUsd: flipGuardPending,
       flipGuardFilledDistanceUsd: flipGuardFilled,
@@ -1129,6 +1140,7 @@ export class StreamingPlatform {
     const profitTargetPriceInput = document.getElementById('profit-target-price') as HTMLInputElement;
     const stopLossPriceInput = document.getElementById('stop-loss-price') as HTMLInputElement;
     const tradeSizeInput = document.getElementById('trade-size') as HTMLInputElement;
+    const tradeSizeUnitSelect = document.getElementById('trade-size-unit') as HTMLSelectElement;
     const priceDifferenceInput = document.getElementById('price-difference') as HTMLInputElement;
     const flipGuardPendingInput = document.getElementById('flip-guard-pending-distance') as HTMLInputElement;
     const flipGuardFilledInput = document.getElementById('flip-guard-filled-distance') as HTMLInputElement;
@@ -1139,6 +1151,7 @@ export class StreamingPlatform {
     if (profitTargetPriceInput) profitTargetPriceInput.value = config.profitTargetPrice.toString();
     if (stopLossPriceInput) stopLossPriceInput.value = config.stopLossPrice.toString();
     if (tradeSizeInput) tradeSizeInput.value = config.tradeSize.toString();
+    if (tradeSizeUnitSelect) tradeSizeUnitSelect.value = config.tradeSizeUnit ?? 'USD';
     if (priceDifferenceInput) {
       priceDifferenceInput.value = config.priceDifference !== null && config.priceDifference !== undefined
         ? config.priceDifference.toString()
