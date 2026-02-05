@@ -1946,52 +1946,6 @@ export class StreamingPlatform {
   }
 
   /**
-   * Sell position manually (by position ID)
-   * Uses TradingManager's public method to close the position
-   */
-  private async sellPosition(positionId: string, tokenId: string, size: number, entryPrice: number): Promise<void> {
-    if (!this.walletState.apiCredentials) {
-      alert('API credentials not available');
-      return;
-    }
-
-    // Get position details from trading manager
-    const status = this.tradingManager.getStatus();
-    const position = status.positions?.find(p => p.id === positionId);
-    
-    if (!position) {
-      alert('Position not found');
-      return;
-    }
-
-    if (!confirm(`Sell position?\nPosition ID: ${positionId.substring(0, 8)}...\nDirection: ${position.direction || 'N/A'}\nSize: $${size.toFixed(2)}\nEntry Price: ${entryPrice.toFixed(2)}`)) {
-      return;
-    }
-
-    try {
-      console.log('[Orders] Selling position manually:', {
-        positionId,
-        tokenId,
-        size,
-        entryPrice,
-        direction: position.direction,
-      });
-
-      // Use TradingManager's public method to close the position
-      await this.tradingManager.closePositionManually(positionId, 'Manual sell');
-      
-      console.log('[Orders] ✅ Position sold successfully');
-      alert(`Position sold successfully!`);
-      
-      // Refresh orders list
-      await this.fetchAndDisplayOrders();
-    } catch (error) {
-      console.error('[Orders] ❌ Error selling position:', error);
-      alert(`Failed to sell position: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
    * Sell order using order information
    * Sells the entire position (max shares) for the given order
    */
