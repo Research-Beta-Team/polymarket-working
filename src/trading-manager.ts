@@ -292,10 +292,16 @@ export class TradingManager {
           limitPrice: info.limitPrice,
           direction: info.direction,
         };
-        this.trades.push(trade);
-        this.notifyTradeUpdate(trade);
+        // Deduplicate: only record if we don't already have a trade for this order (avoid double-processing)
+        const alreadyRecorded = this.trades.some(t => t.transactionHash === info.orderId);
+        if (!alreadyRecorded) {
+          this.trades.push(trade);
+          this.notifyTradeUpdate(trade);
+          console.log('[TradingManager] ✅ Pending entry order filled (verified matched):', info.orderId.substring(0, 8), info.direction, info.size.toFixed(2));
+        } else {
+          console.log('[TradingManager] Skipping duplicate trade record for order:', info.orderId.substring(0, 8));
+        }
         this.notifyStatusUpdate();
-        console.log('[TradingManager] ✅ Pending entry order filled (verified matched):', info.orderId.substring(0, 8), info.direction, info.size.toFixed(2));
       }
     } catch (e) {
       console.warn('[TradingManager] checkPendingEntryOrderFills error:', e);

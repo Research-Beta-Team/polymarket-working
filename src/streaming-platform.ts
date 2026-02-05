@@ -1247,10 +1247,20 @@ export class StreamingPlatform {
       }
     }
 
-    // History tab: show only filled orders (buy and sell) by the bot
+    // History tab: show only filled orders (buy and sell) by the bot; deduplicate by order (transactionHash) so each execution shows once
     const tradesContainer = document.getElementById('trades-table-container');
     if (tradesContainer) {
-      const filledTrades = trades.filter((t) => t.status === 'filled').slice().reverse();
+      const filled = trades.filter((t) => t.status === 'filled');
+      const seenOrderIds = new Set<string>();
+      const filledTrades = filled
+        .filter((t) => {
+          const key = t.transactionHash ?? t.id;
+          if (seenOrderIds.has(key)) return false;
+          seenOrderIds.add(key);
+          return true;
+        })
+        .slice()
+        .reverse();
       if (filledTrades.length === 0) {
         tradesContainer.innerHTML = '<p class="no-trades text-slate-500 text-sm">No filled orders yet. Filled buy and sell orders executed by the bot will appear here.</p>';
       } else {
