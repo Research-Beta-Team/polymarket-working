@@ -112,13 +112,15 @@ export class TradingManager {
   }
 
   /**
-   * Set wallet balance and calculate max position size (50% of balance)
+   * Set wallet balance and calculate max position size (50% of balance).
+   * When balance is 0 or not set, clears maxPositionSize so entry is not blocked by a stale cap.
    */
   setWalletBalance(balance: number): void {
-    // Calculate max position size (50% of balance)
-    if (balance) {
+    this.status.walletBalance = balance ?? undefined;
+    if (balance != null && balance > 0) {
       this.status.maxPositionSize = balance * 0.5;
-      this.status.walletBalance = balance;
+    } else {
+      this.status.maxPositionSize = undefined;
     }
     this.notifyStatusUpdate();
   }
@@ -170,7 +172,9 @@ export class TradingManager {
   private getTimeRemainingSeconds(): number | null {
     if (!this.activeEvent?.endDate) return null;
     const endMs = new Date(this.activeEvent.endDate).getTime();
-    return Math.max(0, (endMs - Date.now()) / 1000);
+    if (Number.isNaN(endMs)) return null;
+    const remaining = (endMs - Date.now()) / 1000;
+    return Math.max(0, remaining);
   }
 
   /** Price distance in USD (|priceToBeat - currentPrice|). */
@@ -382,7 +386,10 @@ export class TradingManager {
 
     // Price Difference: only enter when |current BTC price - price to beat| >= configured value (USD)
     if (this.strategyConfig.priceDifference != null) {
-      if (this.currentPrice === null || this.priceToBeat === null) return;
+      if (this.currentPrice === null || this.priceToBeat === null) {
+        console.log('[TradingManager] Entry skipped: price difference required but current price or price-to-beat not set (cannot compute distance)');
+        return;
+      }
       const priceDiffUSD = this.getPriceDistanceUSD()!;
       if (priceDiffUSD < this.strategyConfig.priceDifference) {
         console.log(`[TradingManager] Entry skipped: price diff $${priceDiffUSD.toFixed(2)} < required $${this.strategyConfig.priceDifference} (need diff >= $${this.strategyConfig.priceDifference} to enter)`);
@@ -394,7 +401,9 @@ export class TradingManager {
     const timeRemaining = this.getTimeRemainingSeconds();
     const maxTimeRemaining = this.getEntryTimeRemainingMaxSeconds();
     if (timeRemaining === null || timeRemaining >= maxTimeRemaining) {
-      if (timeRemaining !== null) {
+      if (timeRemaining === null) {
+        console.log('[TradingManager] Entry skipped: event end date not set or invalid — time remaining unknown (need valid activeEvent.endDate)');
+      } else {
         console.log(`[TradingManager] Entry skipped: time remaining ${timeRemaining.toFixed(0)}s >= max ${maxTimeRemaining}s (enter only in last ${maxTimeRemaining}s)`);
       }
       return;
@@ -443,13 +452,17 @@ export class TradingManager {
       const activePositions = this.getActivePositions();
       const totalPositionSize = activePositions.reduce((sum, p) => sum + p.size, 0);
       const tradeSize = this.strategyConfig.tradeSize;
-      if (this.status.maxPositionSize && totalPositionSize >= this.status.maxPositionSize) {
-        console.log(`[TradingManager] Entry skipped: at max position size (${totalPositionSize.toFixed(0)} >= ${this.status.maxPositionSize})`);
-        return;
-      }
-      if (this.status.maxPositionSize && (totalPositionSize + tradeSize) > this.status.maxPositionSize) {
-        console.log(`[TradingManager] Entry skipped: next trade would exceed max position size`);
-        return;
+      // Only enforce cap when we have a valid max (positive number); avoid blocking on stale or zero cap when there are no positions
+      const maxPos = this.status.maxPositionSize;
+      if (maxPos != null && maxPos > 0) {
+        if (totalPositionSize >= maxPos) {
+          console.log(`[TradingManager] Entry skipped: at max position size (${totalPositionSize.toFixed(0)} >= ${maxPos})`);
+          return;
+        }
+        if ((totalPositionSize + tradeSize) > maxPos) {
+          console.log(`[TradingManager] Entry skipped: next trade would exceed max position size (${totalPositionSize.toFixed(0)} + ${tradeSize} > ${maxPos})`);
+          return;
+        }
       }
 
       const entryPrice = this.strategyConfig.entryPrice;
@@ -498,6 +511,7 @@ export class TradingManager {
       }
 
       const limitPrice = Math.max(0, entryPrice - 1);
+      console.log(`[TradingManager] Entry condition met: placing POST_ONLY limit BUY at ${limitPrice.toFixed(2)} (${direction}), size $${tradeSize}`);
       this.isPlacingOrder = true;
       this.orderPlacementStartTime = Date.now();
       try {
@@ -560,8 +574,9 @@ export class TradingManager {
         taker: '0x0000000000000000000000000000000000000000',
       };
 
-      const options = { negRisk: false, postOnly: true } as { negRisk: boolean; postOnly?: boolean };
-      const response = await this.browserClobClient.createAndPostOrder(order, options, OrderType.GTC);
+      const options = { negRisk: false };
+      // postOnly is 5th param: createAndPostOrder(userOrder, options, orderType, deferExec, postOnly)
+      const response = await this.browserClobClient.createAndPostOrder(order, options, OrderType.GTC, false, true);
       const orderId = response?.orderID || (response as any)?.order_id || (response as any)?.id;
       if (orderId) {
         console.log(`[TradingManager] POST_ONLY limit BUY placed at ${limitPricePercent.toFixed(2)} (${direction})`);
@@ -600,8 +615,8 @@ export class TradingManager {
         expiration: 0,
         taker: '0x0000000000000000000000000000000000000000',
       };
-      const options = { negRisk: false, postOnly: true } as { negRisk: boolean; postOnly?: boolean };
-      const response = await this.browserClobClient.createAndPostOrder(order, options, OrderType.GTC);
+      const options = { negRisk: false };
+      const response = await this.browserClobClient.createAndPostOrder(order, options, OrderType.GTC, false, true);
       const orderId = response?.orderID || (response as any)?.order_id || (response as any)?.id;
       if (orderId) return { orderId };
       return { error: (response as any)?.errorMsg || (response as any)?.error || 'No order ID' };
@@ -768,22 +783,19 @@ export class TradingManager {
           feeRateBps = 1000;
         }
 
-        // For BUY market orders, amount should be in shares, not USD
-        // Convert USD orderSize to shares using the ask price
-        const shares = orderSize / askPrice;
-        
+        // Polymarket SDK expects BUY market order amount in USD (maker/USDC amount), not shares
         const marketOrder = {
           tokenID: tokenId,
-          amount: shares, // Amount in shares, not USD
+          amount: orderSize, // USD (orderSize is already in dollars)
           side: Side.BUY,
           feeRateBps: feeRateBps,
         };
         
+        const estimatedShares = orderSize / askPrice;
         console.log(`[TradingManager] Market order calculation:`, {
           orderSizeUSD: orderSize.toFixed(2),
           askPrice: askPrice.toFixed(4),
-          shares: shares.toFixed(4),
-          estimatedCost: (shares * askPrice).toFixed(2),
+          estimatedShares: estimatedShares.toFixed(4),
         });
 
         console.log(`[TradingManager] Placing split order ${orderIndex + 1}/${totalOrders} at target price ${targetPrice.toFixed(2)}:`, {
