@@ -53,6 +53,8 @@ export interface Position {
     size: number; // Size in USD
     timestamp: number;
   }>; // Track individual filled orders for large positions
+  /** Remaining shares after a partial sell; when set, used for sell size instead of recalc from filledOrders */
+  sharesRemaining?: number;
   entryTimestamp: number; // When position was entered
 }
 

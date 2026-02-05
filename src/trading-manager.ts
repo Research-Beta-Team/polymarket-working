@@ -1564,7 +1564,7 @@ export class TradingManager {
     totalOrders: number,
     yesPricePercent: number,
     noPricePercent: number
-  ): Promise<{ success: boolean; orderId?: string; fillPrice?: number; error?: string }> {
+  ): Promise<{ success: boolean; orderId?: string; fillPrice?: number; filledShares?: number; error?: string }> {
     try {
       if (!this.apiCredentials) {
         return { success: false, error: 'No API credentials' };
@@ -1692,17 +1692,25 @@ export class TradingManager {
 
         const orderId = response?.orderID || (response as any)?.orderId;
         const orderStatus = ((response as any)?.status || '').toLowerCase();
+        const rawSizeMatched = (response as any)?.size_matched ?? (response as any)?.amount_matched;
+        const filledSharesFromApi = rawSizeMatched != null ? Number(rawSizeMatched) : undefined;
 
         // Only treat as filled when API reports status "matched". FAK can return orderID for killed/delayed orders.
         if (orderId && orderStatus === 'matched') {
+          const filledShares = filledSharesFromApi ?? roundedShares;
+          const isPartial = filledSharesFromApi != null && filledSharesFromApi < roundedShares - 1e-6;
           console.log(`[TradingManager] ✅ SELL order ${orderIndex + 1}/${totalOrders} - FILLED (status=matched):`, {
             orderId: orderId.substring(0, 12) + '...',
             fillPrice: currentPricePercent.toFixed(2),
+            filledShares: filledShares.toFixed(4),
+            requestedShares: roundedShares.toFixed(4),
+            ...(isPartial && { partialFill: true, remainingShares: (roundedShares - filledShares).toFixed(4) }),
           });
           return {
             success: true,
             orderId,
             fillPrice: currentPricePercent,
+            filledShares,
           };
         }
         if (orderId && orderStatus && orderStatus !== 'matched') {
@@ -1768,37 +1776,22 @@ export class TradingManager {
       const agg = aggregated.get(tokenId)!;
       agg.positions.push(position);
       agg.totalSize += position.size;
-      
-      // Calculate shares from ACTUAL filled orders (what was actually received)
-      // This is more accurate than recalculating from entry price
-      if (position.filledOrders && position.filledOrders.length > 0) {
-        // Use actual fill prices from filled orders
-        let positionShares = 0;
+
+      // Use sharesRemaining when set (after partial sell); else derive from filled orders or entry price
+      let positionShares: number;
+      if (position.sharesRemaining != null && position.sharesRemaining >= 0) {
+        positionShares = position.sharesRemaining;
+      } else if (position.filledOrders && position.filledOrders.length > 0) {
+        positionShares = 0;
         for (const filledOrder of position.filledOrders) {
-          const fillPriceDecimal = filledOrder.price / 100; // Convert percentage to decimal
-          const orderShares = filledOrder.size / fillPriceDecimal;
-          positionShares += orderShares;
+          const fillPriceDecimal = filledOrder.price / 100;
+          positionShares += filledOrder.size / fillPriceDecimal;
         }
-        agg.totalShares += positionShares;
-        
-        console.log(`[TradingManager] 📊 Position shares from filled orders:`, {
-          positionId: position.id.substring(0, 8) + '...',
-          numFilledOrders: position.filledOrders.length,
-          totalShares: positionShares.toFixed(4),
-          filledOrders: position.filledOrders.map(fo => ({
-            price: fo.price.toFixed(2),
-            sizeUSD: fo.size.toFixed(2),
-            shares: (fo.size / (fo.price / 100)).toFixed(4)
-          }))
-        });
       } else {
-        // Fallback: Calculate from entry price if no filledOrders (shouldn't happen, but safety)
         const entryPriceDecimal = position.entryPrice / 100;
-        const positionShares = position.size / entryPriceDecimal;
-        agg.totalShares += positionShares;
-        
-        console.warn(`[TradingManager] ⚠️ Position ${position.id.substring(0, 8)}... has no filledOrders, using entry price calculation (may be inaccurate)`);
+        positionShares = position.size / entryPriceDecimal;
       }
+      agg.totalShares += positionShares;
     }
     
     return aggregated;
@@ -1901,15 +1894,11 @@ export class TradingManager {
         });
         
         try {
-          // Close all positions for this token in ONE order
-          await this.closeAggregatedPositions(aggregatedData.positions, tokenId, aggregatedData.totalSize, aggregatedData.totalShares, aggregatedData.direction, reason, isStopLoss);
-          
-          // Mark all positions for this token as closed
-          for (const pos of aggregatedData.positions) {
-            closedPositionIds.push(pos.id);
+          const { closedPositionIds: ids } = await this.closeAggregatedPositions(aggregatedData.positions, tokenId, aggregatedData.totalSize, aggregatedData.totalShares, aggregatedData.direction, reason, isStopLoss);
+          closedPositionIds.push(...ids);
+          if (ids.length > 0) {
+            console.log(`[TradingManager] ✅✅✅ [${tokenCount}/${aggregatedByToken.size}] SUCCESS - Closed ${ids.length} position(s) for token ${tokenId.substring(0, 10)}...`);
           }
-          
-          console.log(`[TradingManager] ✅✅✅ [${tokenCount}/${aggregatedByToken.size}] SUCCESS - Closed ${aggregatedData.positions.length} position(s) for token ${tokenId.substring(0, 10)}...`);
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : 'Unknown error';
           const errorStack = error instanceof Error ? error.stack : undefined;
@@ -1988,14 +1977,13 @@ export class TradingManager {
               retryTokenCount++;
               try {
                 console.log(`[TradingManager] 🔄 RETRY ${retryTokenCount}/${retryAggregated.size}: Token ${retryTokenId.substring(0, 10)}... (${retryData.positions.length} positions, $${retryData.totalSize.toFixed(2)}, ${retryData.totalShares.toFixed(4)} shares)`);
-                await this.closeAggregatedPositions(retryData.positions, retryTokenId, retryData.totalSize, retryData.totalShares, retryData.direction, `${reason} - RETRY AFTER FAILURE`, true);
-                
-                // Mark all positions for this token as closed
+                const { closedPositionIds: retryIds } = await this.closeAggregatedPositions(retryData.positions, retryTokenId, retryData.totalSize, retryData.totalShares, retryData.direction, `${reason} - RETRY AFTER FAILURE`, true);
+                closedPositionIds.push(...retryIds);
                 for (const pos of retryData.positions) {
-                  closedPositionIds.push(pos.id);
-                  // Remove from failed list
-                  const idx = failedPositionIds.indexOf(pos.id);
-                  if (idx > -1) failedPositionIds.splice(idx, 1);
+                  if (retryIds.includes(pos.id)) {
+                    const idx = failedPositionIds.indexOf(pos.id);
+                    if (idx > -1) failedPositionIds.splice(idx, 1);
+                  }
                 }
                 
                 console.log(`[TradingManager] ✅ RETRY ${retryTokenCount} SUCCESS: ${retryData.positions.length} position(s) closed`);
@@ -2039,10 +2027,8 @@ export class TradingManager {
           
           for (const [emergencyTokenId, emergencyData] of emergencyAggregated.entries()) {
             try {
-              await this.closeAggregatedPositions(emergencyData.positions, emergencyTokenId, emergencyData.totalSize, emergencyData.totalShares, emergencyData.direction, `${reason} - EMERGENCY RETRY`, true);
-              for (const pos of emergencyData.positions) {
-                closedPositionIds.push(pos.id);
-              }
+              const { closedPositionIds: emergencyIds } = await this.closeAggregatedPositions(emergencyData.positions, emergencyTokenId, emergencyData.totalSize, emergencyData.totalShares, emergencyData.direction, `${reason} - EMERGENCY RETRY`, true);
+              closedPositionIds.push(...emergencyIds);
             } catch (error) {
               console.error(`[TradingManager] ❌ EMERGENCY RETRY FAILED for token ${emergencyTokenId.substring(0, 10)}...`);
             }
@@ -2098,6 +2084,17 @@ export class TradingManager {
    * This sells cumulative shares in a single transaction
    * Shares are calculated based on entry prices (what was actually bought)
    */
+  /** Get current shares for a position (sharesRemaining, or derived from filledOrders/entry). */
+  private getPositionShares(position: Position): number {
+    if (position.sharesRemaining != null && position.sharesRemaining >= 0) return position.sharesRemaining;
+    if (position.filledOrders && position.filledOrders.length > 0) {
+      let s = 0;
+      for (const fo of position.filledOrders) s += fo.size / (fo.price / 100);
+      return s;
+    }
+    return position.size / (position.entryPrice / 100);
+  }
+
   private async closeAggregatedPositions(
     positions: Position[],
     tokenId: string,
@@ -2106,7 +2103,7 @@ export class TradingManager {
     direction: 'UP' | 'DOWN',
     reason: string,
     isStopLoss: boolean
-  ): Promise<void> {
+  ): Promise<{ closedPositionIds: string[] }> {
     console.log(`[TradingManager] 💰 AGGREGATED CLOSE: Selling ${positions.length} position(s) for token ${tokenId.substring(0, 10)}...`, {
       totalSizeUSD: totalSizeUSD.toFixed(2),
       totalShares: totalShares.toFixed(4),
@@ -2151,7 +2148,7 @@ export class TradingManager {
       this.status.totalProfit += profit;
       this.status.successfulTrades++;
       this.notifyTradeUpdate(exitTrade);
-      return;
+      return { closedPositionIds: positions.map(p => p.id) };
     }
 
     // Get current market price for selling
@@ -2175,74 +2172,86 @@ export class TradingManager {
     const noPricePercent = toPercentage(noPrice);
     const currentPricePercent = direction === 'UP' ? yesPricePercent : noPricePercent;
 
-    console.log(`[TradingManager] 📊 AGGREGATED SELL CALCULATION:`, {
-      totalSizeUSD: totalSizeUSD.toFixed(2),
-      totalShares: totalShares.toFixed(4),
-      currentSellPrice: currentPricePercent.toFixed(4),
-      estimatedUSDValue: (totalShares * (currentPricePercent / 100)).toFixed(2),
-      numPositions: positions.length,
-      note: 'Shares calculated from entry prices (actual shares owned)',
-      warning: 'Ensure you have sufficient token balance and allowance for this sell order'
-    });
+    let remainingShares = totalShares;
+    let currentTotalSize = totalSizeUSD;
+    const closedPositionIds: string[] = [];
+    const epsilon = 1e-6;
 
-    // Place ONE sell order for all cumulative shares (calculated from entry prices)
-    const result = await this.placeSingleSellOrder(
-      tokenId,
-      totalShares,  // Pass shares directly, not USD
-      direction,
-      0,
-      1,
-      yesPricePercent,
-      noPricePercent
-    );
+    while (remainingShares > epsilon) {
+      console.log(`[TradingManager] 📊 AGGREGATED SELL (remaining):`, {
+        remainingShares: remainingShares.toFixed(4),
+        currentTotalSize: currentTotalSize.toFixed(2),
+        currentSellPrice: currentPricePercent.toFixed(4),
+      });
 
-    if (!result.success || !result.orderId || result.fillPrice === undefined) {
-      throw new Error(`Aggregated sell order failed: ${result.error || 'Unknown error'}`);
+      const result = await this.placeSingleSellOrder(
+        tokenId,
+        remainingShares,
+        direction,
+        0,
+        1,
+        yesPricePercent,
+        noPricePercent
+      );
+
+      if (!result.success || !result.orderId || result.fillPrice === undefined) {
+        throw new Error(`Aggregated sell order failed: ${result.error || 'Unknown error'}`);
+      }
+
+      const filled = Math.min(result.filledShares ?? remainingShares, remainingShares);
+      const exitPriceDecimal = result.fillPrice / 100;
+      const exitValueUSD = filled * exitPriceDecimal;
+      const avgEntryPrice = positions.reduce((sum, p) => sum + p.entryPrice * p.size, 0) / currentTotalSize;
+      const entryCostUSD = filled * (avgEntryPrice / 100);
+      const totalProfit = exitValueUSD - entryCostUSD;
+
+      const exitTrade: Trade = {
+        id: `exit-aggregated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        eventSlug: positions[0].eventSlug,
+        tokenId,
+        side: 'SELL',
+        size: exitValueUSD,
+        price: result.fillPrice,
+        timestamp: Date.now(),
+        status: 'filled',
+        transactionHash: result.orderId,
+        profit: totalProfit,
+        reason: `Aggregated exit (${positions.length} positions${isStopLoss ? ' - ⚡STOP LOSS⚡' : ''}${filled < remainingShares + epsilon ? ' - partial fill' : ''}): ${reason}`,
+        orderType: 'MARKET',
+        direction,
+      };
+
+      this.trades.push(exitTrade);
+      this.status.totalTrades++;
+      this.status.totalProfit += totalProfit;
+      this.status.successfulTrades++;
+      this.notifyTradeUpdate(exitTrade);
+
+      remainingShares -= filled;
+
+      if (remainingShares <= epsilon) {
+        closedPositionIds.push(...positions.map(p => p.id));
+        console.log(`[TradingManager] ✅ AGGREGATED CLOSE SUCCESS (all sold):`, {
+          numPositions: positions.length,
+          totalShares: totalShares.toFixed(4),
+          orderId: result.orderId.substring(0, 12) + '...',
+        });
+        break;
+      }
+
+      const ratio = remainingShares / (remainingShares + filled);
+      for (const p of positions) {
+        const prevShares = this.getPositionShares(p);
+        p.size *= ratio;
+        p.sharesRemaining = prevShares * ratio;
+      }
+      currentTotalSize = positions.reduce((sum, p) => sum + p.size, 0);
+      this.status.positions = [...this.positions];
+      this.status.totalPositionSize = this.positions.reduce((s, p) => s + p.size, 0);
+      console.log(`[TradingManager] 📉 Partial fill: adjusted position sizes (remaining ${remainingShares.toFixed(4)} shares, $${currentTotalSize.toFixed(2)}). Retrying sell.`);
     }
 
-    // Calculate profit based on actual shares sold
-    const exitPriceDecimal = result.fillPrice / 100;
-    const exitValueUSD = totalShares * exitPriceDecimal;
-    
-    // Calculate weighted average entry price for profit calculation
-    const avgEntryPrice = positions.reduce((sum, p) => sum + p.entryPrice * p.size, 0) / totalSizeUSD;
-    const avgEntryPriceDecimal = avgEntryPrice / 100;
-    const entryCostUSD = totalShares * avgEntryPriceDecimal;
-    const totalProfit = exitValueUSD - entryCostUSD;
-
-    // Create exit trade record
-    const exitTrade: Trade = {
-      id: `exit-aggregated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      eventSlug: positions[0].eventSlug,
-      tokenId,
-      side: 'SELL',
-      size: exitValueUSD, // USD value received from selling shares
-      price: result.fillPrice,
-      timestamp: Date.now(),
-      status: 'filled',
-      transactionHash: result.orderId,
-      profit: totalProfit,
-      reason: `Aggregated exit (${positions.length} positions${isStopLoss ? ' - ⚡STOP LOSS⚡' : ''}): ${reason}`,
-      orderType: 'MARKET',
-      direction,
-    };
-
-    this.trades.push(exitTrade);
-    this.status.totalTrades++;
-    this.status.totalProfit += totalProfit;
-    this.status.successfulTrades++;
-    this.notifyTradeUpdate(exitTrade);
-
-    console.log(`[TradingManager] ✅ AGGREGATED CLOSE SUCCESS:`, {
-      numPositions: positions.length,
-      totalShares: totalShares.toFixed(4),
-      entryCostUSD: entryCostUSD.toFixed(2),
-      exitValueUSD: exitValueUSD.toFixed(2),
-      avgEntryPrice: avgEntryPrice.toFixed(2),
-      exitPrice: result.fillPrice.toFixed(2),
-      totalProfit: totalProfit.toFixed(2),
-      orderId: result.orderId.substring(0, 12) + '...'
-    });
+    return { closedPositionIds };
   }
 
   /**
@@ -2421,22 +2430,22 @@ export class TradingManager {
       );
 
       if (result.success && result.orderId && result.fillPrice !== undefined) {
-        // Calculate profit based on actual shares sold
+        const filledShares = result.filledShares ?? sharesPerSplit;
         const exitPriceDecimal = result.fillPrice / 100;
         const entryPriceDecimal = position.entryPrice / 100;
-        const exitValueUSD = sharesPerSplit * exitPriceDecimal;
-        const entryCostUSD = sharesPerSplit * entryPriceDecimal;
+        const exitValueUSD = filledShares * exitPriceDecimal;
+        const entryCostUSD = filledShares * entryPriceDecimal;
         const splitProfit = exitValueUSD - entryCostUSD;
-        
+
         totalProfit += splitProfit;
-        totalFilledSize += exitValueUSD; // Track USD value received
+        totalFilledSize += exitValueUSD;
 
         const exitTrade: Trade = {
           id: `exit-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 9)}`,
           eventSlug: position.eventSlug,
           tokenId: position.tokenId,
           side: 'SELL',
-          size: exitValueUSD, // USD value received from selling shares
+          size: exitValueUSD,
           price: result.fillPrice,
           timestamp: Date.now(),
           status: 'filled',

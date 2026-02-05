@@ -31,7 +31,7 @@ export class StreamingPlatform {
   private priceUpdateInterval: number | null = null; // Interval for updating UP/DOWN prices
   private redemptionService: RedemptionService | null = null; // Auto-redemption for resolved markets (background)
   private priceChart: Chart | null = null; // Chart.js line chart instance
-  private ordersRefreshIntervalId: number | null = null; // Periodic refresh of orders/positions list
+  private positionsRefreshIntervalId: number | null = null; // Periodic refresh of positions list
   // Wallet connection state
   private walletState: {
     eoaAddress: string | null;
@@ -71,7 +71,7 @@ export class StreamingPlatform {
     });
     this.tradingManager.setOnTradeUpdate((trade) => {
       this.renderTradingSection();
-      // When any order is filled (buy or sell), refresh orders/positions list so UI stays in sync
+      // When any order is filled (buy or sell), refresh positions and open orders so UI stays in sync
       if (trade.status === 'filled') {
         this.fetchAndDisplayPositions();
         this.fetchAndDisplayOpenOrders();
@@ -838,19 +838,20 @@ export class StreamingPlatform {
             <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
               <div class="border-b border-slate-200 dark:border-slate-700">
                 <nav class="flex px-6" aria-label="Tabs">
-                  <button type="button" data-tab="positions" class="tab-btn border-b-2 border-indigo-500 py-4 px-6 text-sm font-bold text-indigo-500">Positions</button>
-                  <button type="button" data-tab="open-orders" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">Open Orders</button>
+                  <button type="button" data-tab="positions" class="tab-btn border-b-2 border-indigo-500 py-4 px-6 text-sm font-bold text-indigo-500" aria-label="Positions">Positions</button>
+                  <button type="button" data-tab="open-orders" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300" aria-label="Open Orders">Open Orders</button>
                   <button type="button" data-tab="history" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">History</button>
                   <button type="button" data-tab="wallet" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">Wallet Info</button>
                 </nav>
               </div>
               <div class="p-6">
-                <div id="tab-positions" class="tab-panel">
+                <div id="tab-positions" class="tab-panel" role="tabpanel" aria-label="Positions">
+                  <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Active positions (Polymarket)</h3>
                   <div id="positions-section" class="flex flex-wrap items-center justify-between gap-4 mb-4">
-                    <button id="refresh-positions" type="button" class="px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-sm font-medium">Refresh</button>
-                    <span id="positions-count" class="text-sm text-slate-500">Loading...</span>
+                    <button id="refresh-positions" type="button" class="px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-sm font-medium" aria-label="Refresh positions">Refresh</button>
+                    <span id="positions-count" class="text-sm text-slate-500" aria-live="polite">Loading...</span>
                   </div>
-                  <div id="positions-container" class="min-h-[100px]">Loading positions...</div>
+                  <div id="positions-container" class="min-h-[100px] positions-container">Loading positions...</div>
                 </div>
                 <div id="tab-open-orders" class="tab-panel hidden">
                   <div id="open-orders-section" class="flex flex-wrap items-center justify-between gap-4 mb-4">
@@ -1409,7 +1410,7 @@ export class StreamingPlatform {
     // Clear trading manager credentials
     this.tradingManager.setApiCredentials(null);
     this.tradingManager.setBrowserClobClient(null);
-    this.stopOrdersRefreshInterval();
+    this.stopPositionsRefreshInterval();
 
     // Update UI
     this.renderWalletSection();
@@ -1464,9 +1465,9 @@ export class StreamingPlatform {
       // Fetch balance after initialization
       await this.fetchBalance();
 
-      // Fetch orders once after initialization
+      // Fetch positions once after initialization
       this.fetchAndDisplayPositions();
-      this.startOrdersRefreshInterval();
+      this.startPositionsRefreshInterval();
 
       this.renderWalletSection();
       alert('Trading session initialized successfully!');
@@ -1611,20 +1612,20 @@ export class StreamingPlatform {
     if (footerProxy) footerProxy.textContent = this.walletState.proxyAddress || '--';
   }
 
-  private startOrdersRefreshInterval(): void {
-    this.stopOrdersRefreshInterval();
+  private startPositionsRefreshInterval(): void {
+    this.stopPositionsRefreshInterval();
     const intervalMs = 20000; // 20 seconds
-    this.ordersRefreshIntervalId = window.setInterval(() => {
+    this.positionsRefreshIntervalId = window.setInterval(() => {
       if (this.walletState.proxyAddress) {
         this.fetchAndDisplayPositions();
       }
     }, intervalMs);
   }
 
-  private stopOrdersRefreshInterval(): void {
-    if (this.ordersRefreshIntervalId !== null) {
-      window.clearInterval(this.ordersRefreshIntervalId);
-      this.ordersRefreshIntervalId = null;
+  private stopPositionsRefreshInterval(): void {
+    if (this.positionsRefreshIntervalId !== null) {
+      window.clearInterval(this.positionsRefreshIntervalId);
+      this.positionsRefreshIntervalId = null;
     }
   }
 
@@ -1707,7 +1708,7 @@ export class StreamingPlatform {
         container.innerHTML = `
           <p class="text-slate-500 text-xs mb-2">Active positions from Polymarket (by proxy wallet).</p>
           <div class="overflow-x-auto">
-            <table class="orders-table w-full border-collapse text-sm">
+            <table class="positions-table orders-table w-full border-collapse text-sm">
               <thead>
                 <tr class="border-b border-slate-200 dark:border-slate-700">
                   <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Market</th>
