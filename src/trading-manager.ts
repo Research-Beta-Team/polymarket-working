@@ -247,8 +247,21 @@ export class TradingManager {
       });
       for (const [tokenId, info] of this.pendingEntryOrders.entries()) {
         if (openIds.has(info.orderId)) continue;
-        // Order no longer open → treat as filled
+        // Order no longer in open list — verify it was actually matched before recording
+        let orderStatus: string | null = null;
+        try {
+          const res = await this.browserClobClient.getOrder(info.orderId);
+          const order = (res as any)?.order ?? res;
+          orderStatus = (order?.status ?? '').toString().toLowerCase();
+        } catch (e) {
+          console.warn('[TradingManager] getOrder failed for pending entry (order may be cancelled/expired):', info.orderId.substring(0, 12) + '...', e);
+        }
         this.pendingEntryOrders.delete(tokenId);
+        if (orderStatus !== 'matched') {
+          console.log('[TradingManager] Pending entry order no longer open but not matched (status=', orderStatus ?? 'unknown', '). Not recording as fill.');
+          this.notifyStatusUpdate();
+          continue;
+        }
         const newPosition: Position = {
           id: `position-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           eventSlug: this.activeEvent!.slug,
@@ -282,7 +295,7 @@ export class TradingManager {
         this.trades.push(trade);
         this.notifyTradeUpdate(trade);
         this.notifyStatusUpdate();
-        console.log('[TradingManager] ✅ Pending entry order filled:', info.orderId.substring(0, 8), info.direction, info.size.toFixed(2));
+        console.log('[TradingManager] ✅ Pending entry order filled (verified matched):', info.orderId.substring(0, 8), info.direction, info.size.toFixed(2));
       }
     } catch (e) {
       console.warn('[TradingManager] checkPendingEntryOrderFills error:', e);
@@ -680,12 +693,25 @@ export class TradingManager {
       });
       for (const [orderId, positionIds] of this.pendingProfitSellOrders.entries()) {
         if (openIds.has(orderId)) continue;
+        let orderStatus: string | null = null;
+        try {
+          const res = await this.browserClobClient.getOrder(orderId);
+          const order = (res as any)?.order ?? res;
+          orderStatus = (order?.status ?? '').toString().toLowerCase();
+        } catch (e) {
+          console.warn('[TradingManager] getOrder failed for pending profit sell (order may be cancelled/expired):', orderId.substring(0, 12) + '...', e);
+        }
         this.pendingProfitSellOrders.delete(orderId);
+        if (orderStatus !== 'matched') {
+          console.log('[TradingManager] Profit target sell no longer open but not matched (status=', orderStatus ?? 'unknown', '). Not removing positions.');
+          this.notifyStatusUpdate();
+          continue;
+        }
         const before = this.positions.length;
         this.positions = this.positions.filter(p => !positionIds.includes(p.id));
         this.status.positions = [...this.positions];
         this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
-        console.log(`[TradingManager] ✅ Profit target limit sell filled, orderId: ${orderId.substring(0, 8)}..., removed ${before - this.positions.length} position(s)`);
+        console.log(`[TradingManager] ✅ Profit target limit sell filled (verified matched), orderId: ${orderId.substring(0, 8)}..., removed ${before - this.positions.length} position(s)`);
         this.notifyStatusUpdate();
       }
     } catch (e) {
@@ -860,25 +886,30 @@ export class TradingManager {
           return { success: false, error: errorMessage };
         }
 
-        if (response?.orderID) {
-          console.log(`[TradingManager] ✅ Order ${orderIndex + 1}/${totalOrders} placed successfully:`, {
-            orderId: response.orderID.substring(0, 8) + '...',
+        const orderId = response?.orderID || (response as any)?.orderId;
+        const orderStatus = ((response as any)?.status || '').toLowerCase();
+        if (orderId && orderStatus === 'matched') {
+          console.log(`[TradingManager] ✅ Order ${orderIndex + 1}/${totalOrders} FILLED (status=matched):`, {
+            orderId: orderId.substring(0, 8) + '...',
             fillPrice: toPercentage(askPrice).toFixed(2),
             orderSize: orderSize.toFixed(2),
           });
           return {
             success: true,
-            orderId: response.orderID,
+            orderId,
             fillPrice: toPercentage(askPrice),
           };
-        } else {
-          // Check if response contains error information
-          const errorData = (response as any)?.error || (response as any)?.data?.error;
-          const errorMsg = errorData || 'No order ID returned from exchange';
-          
+        }
+        if (orderId && orderStatus && orderStatus !== 'matched') {
+          console.warn(`[TradingManager] ⚠️ BUY order ${orderIndex + 1}/${totalOrders} - Order placed but NOT filled (status=${orderStatus}).`, { orderId: orderId.substring(0, 8) + '...', status: orderStatus });
+          return { success: false, error: `Order did not fill (status: ${orderStatus}).` };
+        }
+        {
+          const errorData = (response as any)?.error || (response as any)?.errorMsg || (response as any)?.data?.error;
+          const errorMsg = errorData || 'No order ID or not matched';
           console.error(`[TradingManager] ❌ Order ${orderIndex + 1}/${totalOrders} failed:`, {
             error: errorMsg,
-            response: response,
+            responseStatus: (response as any)?.status,
             tokenId: tokenId.substring(0, 10) + '...',
             targetPrice: targetPrice.toFixed(2),
             orderSize: orderSize.toFixed(2),
@@ -1649,24 +1680,37 @@ export class TradingManager {
           return { success: false, error: errorMessage };
         }
 
-        if (response?.orderID) {
-          console.log(`[TradingManager] ✅ SELL order ${orderIndex + 1}/${totalOrders} - SUCCESS:`, {
-            orderId: response.orderID.substring(0, 12) + '...',
+        const orderId = response?.orderID || (response as any)?.orderId;
+        const orderStatus = ((response as any)?.status || '').toLowerCase();
+
+        // Only treat as filled when API reports status "matched". FAK can return orderID for killed/delayed orders.
+        if (orderId && orderStatus === 'matched') {
+          console.log(`[TradingManager] ✅ SELL order ${orderIndex + 1}/${totalOrders} - FILLED (status=matched):`, {
+            orderId: orderId.substring(0, 12) + '...',
             fillPrice: currentPricePercent.toFixed(2),
           });
           return {
             success: true,
-            orderId: response.orderID,
+            orderId,
             fillPrice: currentPricePercent,
           };
-        } else {
-          // Check if response contains error information
-          const errorData = (response as any)?.error || (response as any)?.data?.error;
-          const errorMsg = errorData || 'No order ID returned from exchange';
-          
+        }
+        if (orderId && orderStatus && orderStatus !== 'matched') {
+          console.warn(`[TradingManager] ⚠️ SELL order ${orderIndex + 1}/${totalOrders} - Order placed but NOT filled (status=${orderStatus}). Do not record as trade.`, {
+            orderId: orderId.substring(0, 12) + '...',
+            status: orderStatus,
+          });
+          return {
+            success: false,
+            error: `Order did not fill (status: ${orderStatus}). Position was not sold.`,
+          };
+        }
+        {
+          const errorData = (response as any)?.error || (response as any)?.errorMsg || (response as any)?.data?.error;
+          const errorMsg = errorData || 'No order ID or not matched';
           console.error(`[TradingManager] ❌ SELL order ${orderIndex + 1}/${totalOrders} - FAILED:`, {
             error: errorMsg,
-            response: response,
+            responseStatus: (response as any)?.status,
             tokenId: tokenId.substring(0, 10) + '...',
             currentSellPrice: currentPricePercent.toFixed(2),
             shares: shares.toFixed(4),

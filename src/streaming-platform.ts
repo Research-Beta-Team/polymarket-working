@@ -198,6 +198,10 @@ export class StreamingPlatform {
     refreshOrdersBtn?.addEventListener('click', () => {
       this.fetchAndDisplayOrders();
     });
+    const refreshOpenOrdersBtn = document.getElementById('refresh-open-orders');
+    refreshOpenOrdersBtn?.addEventListener('click', () => {
+      this.fetchAndDisplayOpenOrders();
+    });
 
     // Events section collapsible functionality
     const eventsHeader = document.getElementById('events-section-header');
@@ -763,7 +767,7 @@ export class StreamingPlatform {
       <header class="sticky top-0 z-50 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-black/90 backdrop-blur-md">
         <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <div class="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center text-white">
+            <div class="w-8 h-8 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-slate-700">
               <span class="material-icons-round text-xl">analytics</span>
             </div>
             <h1 class="text-xl font-bold tracking-tight">CryptoDash <span class="text-xs font-normal text-slate-500 dark:text-slate-400 ml-2">BTC/USD Streaming</span></h1>
@@ -806,6 +810,12 @@ export class StreamingPlatform {
               </div>
             </div>
             <div class="mt-6 pt-6 border-t border-slate-100 dark:border-slate-700">
+              <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">Bot status – Bought token</h3>
+              <div id="active-position-box" class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-4 min-h-[100px] border border-slate-200 dark:border-slate-600">
+                <p class="text-slate-500 text-sm">No active trade to show.</p>
+              </div>
+            </div>
+            <div class="mt-6 pt-6 border-t border-slate-100 dark:border-slate-700">
               <div class="flex items-center justify-between text-sm">
                 <span class="text-slate-500">Trading Status</span>
                 <span id="trading-status-badge" class="flex items-center gap-1.5 font-bold text-slate-500"><span class="w-2 h-2 rounded-full bg-slate-400"></span> INACTIVE</span>
@@ -817,7 +827,7 @@ export class StreamingPlatform {
         <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
           <div class="xl:col-span-8 space-y-6">
             <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-lg overflow-hidden">
-              <div class="bg-gradient-to-r from-violet-600 to-indigo-500 h-1"></div>
+              <div class="bg-white border-b border-slate-200 h-1"></div>
               <div class="p-6">
                 <div id="active-event-display">
                   <div class="text-center py-8 text-slate-500">Loading events...</div>
@@ -828,6 +838,7 @@ export class StreamingPlatform {
               <div class="border-b border-slate-200 dark:border-slate-700">
                 <nav class="flex px-6" aria-label="Tabs">
                   <button type="button" data-tab="orders" class="tab-btn border-b-2 border-indigo-500 py-4 px-6 text-sm font-bold text-indigo-500">Orders</button>
+                  <button type="button" data-tab="open-orders" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">Open Orders</button>
                   <button type="button" data-tab="history" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">History</button>
                   <button type="button" data-tab="wallet" class="tab-btn border-b-2 border-transparent py-4 px-6 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">Wallet Info</button>
                 </nav>
@@ -840,6 +851,13 @@ export class StreamingPlatform {
                   </div>
                   <div id="orders-container" class="min-h-[100px]">Loading orders...</div>
                 </div>
+                <div id="tab-open-orders" class="tab-panel hidden">
+                  <div id="open-orders-section" class="flex flex-wrap items-center justify-between gap-4 mb-4">
+                    <button id="refresh-open-orders" type="button" class="px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-sm font-medium">Refresh</button>
+                    <span id="open-orders-count" class="text-sm text-slate-500">—</span>
+                  </div>
+                  <div id="open-orders-container" class="min-h-[80px] text-sm text-slate-500">Switch to this tab or click Refresh to load open orders.</div>
+                </div>
                 <div id="tab-history" class="tab-panel hidden">
                   <div id="trades-table-container"></div>
                 </div>
@@ -847,8 +865,8 @@ export class StreamingPlatform {
                   <div id="wallet-section" class="space-y-4">
                     <div id="wallet-status-display-tab"></div>
                     <div class="flex flex-wrap gap-2">
-                      <button id="connect-wallet" type="button" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium">Connect Wallet</button>
-                      <button id="initialize-session" type="button" class="px-4 py-2 bg-indigo-500 text-white rounded-lg text-sm font-medium disabled:opacity-50" disabled>Initialize Trading Session</button>
+                      <button id="connect-wallet" type="button" class="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium">Connect Wallet</button>
+                      <button id="initialize-session" type="button" class="px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg text-sm font-medium disabled:opacity-50" disabled>Initialize Trading Session</button>
                     </div>
                     <div id="wallet-info" class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-4 space-y-2" style="display: none;">
                       <div class="flex justify-between"><span class="text-slate-500 text-sm">EOA Address:</span><span id="eoa-address" class="font-mono text-xs break-all">--</span></div>
@@ -880,7 +898,7 @@ export class StreamingPlatform {
                 <h3 class="font-bold flex items-center gap-2 text-slate-900 dark:text-white"><span class="material-icons-round text-indigo-500">settings</span> Strategy Config</h3>
                 <label class="relative inline-flex items-center cursor-pointer">
                   <input type="checkbox" id="strategy-enabled" class="sr-only peer" />
-                  <div class="w-11 h-6 bg-slate-200 dark:bg-slate-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500"></div>
+                  <div class="w-11 h-6 bg-slate-200 dark:bg-slate-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-white peer-checked:border peer-checked:border-slate-300"></div>
                 </label>
               </div>
               <div class="p-6 space-y-5">
@@ -907,7 +925,7 @@ export class StreamingPlatform {
                   <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Flip Guard Filled (USD)</label><input type="number" id="flip-guard-filled-distance" value="5" min="0" step="0.5" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
                 </div>
                 <div class="space-y-1.5"><label class="text-xs font-bold text-slate-500 uppercase">Entry time remaining max (s)</label><input type="number" id="entry-time-remaining-max" value="180" min="0" step="30" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-                <button id="save-strategy" type="button" class="w-full bg-indigo-500 text-white font-bold py-3 rounded-xl hover:bg-indigo-600 transition-colors shadow-lg">Save Strategy</button>
+                <button id="save-strategy" type="button" class="w-full bg-white border border-slate-200 text-slate-700 font-bold py-3 rounded-xl hover:bg-slate-50 transition-colors shadow-lg">Save Strategy</button>
                 <div class="grid grid-cols-2 gap-3 pt-4 border-t border-slate-100 dark:border-slate-700">
                   <button id="start-trading" type="button" class="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-bold py-2 rounded-lg text-sm flex items-center justify-center gap-1"><span class="material-icons-round text-sm">play_arrow</span> Start</button>
                   <button id="stop-trading" type="button" class="bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 font-bold py-2 rounded-lg text-sm flex items-center justify-center gap-1"><span class="material-icons-round text-sm">stop</span> Stop</button>
@@ -963,6 +981,9 @@ export class StreamingPlatform {
             panel.classList.add('hidden');
           }
         });
+        if (tab === 'open-orders') {
+          this.fetchAndDisplayOpenOrders();
+        }
       });
     });
   }
@@ -1196,39 +1217,69 @@ export class StreamingPlatform {
       }
     }
 
-    // Update trades table
+    // Active position box (bot status – bought token)
+    const activePositionBox = document.getElementById('active-position-box');
+    if (activePositionBox) {
+      const positions = status.positions ?? [];
+      if (positions.length === 0) {
+        activePositionBox.innerHTML = '<p class="text-slate-500 text-sm">No active trade to show.</p>';
+      } else {
+        const totalSize = positions.reduce((s, p) => s + p.size, 0);
+        const totalUnrealized = positions.reduce((s, p) => s + (p.unrealizedProfit ?? 0), 0);
+        const first = positions[0];
+        const currentPrice = first.currentPrice ?? 0;
+        const direction = first.direction ?? 'UP';
+        const entryPrice = first.entryPrice;
+        const entryTime = positions.reduce((earliest, p) => (p.entryTimestamp < earliest ? p.entryTimestamp : earliest), positions[0].entryTimestamp);
+        const currentValue = totalSize + totalUnrealized;
+        const unrealizedClass = totalUnrealized >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400';
+        activePositionBox.innerHTML = `
+          <div class="space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-slate-500">Direction</span><span class="font-medium">${direction}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Current price</span><span class="font-mono font-medium">${currentPrice.toFixed(2)}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Entry price</span><span class="font-mono">${entryPrice.toFixed(2)}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Position size</span><span class="font-mono">$${totalSize.toFixed(2)}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Value (est.)</span><span class="font-mono">$${currentValue.toFixed(2)}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Unrealized P&amp;L</span><span class="font-mono font-medium ${unrealizedClass}">$${totalUnrealized >= 0 ? '+' : ''}${totalUnrealized.toFixed(2)}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Entry time</span><span class="font-mono text-xs">${new Date(entryTime).toLocaleString()}</span></div>
+          </div>
+        `;
+      }
+    }
+
+    // History tab: show only filled orders (buy and sell) by the bot
     const tradesContainer = document.getElementById('trades-table-container');
     if (tradesContainer) {
-      if (trades.length === 0) {
-        tradesContainer.innerHTML = '<p class="no-trades">No trades yet</p>';
+      const filledTrades = trades.filter((t) => t.status === 'filled').slice().reverse();
+      if (filledTrades.length === 0) {
+        tradesContainer.innerHTML = '<p class="no-trades text-slate-500 text-sm">No filled orders yet. Filled buy and sell orders executed by the bot will appear here.</p>';
       } else {
         tradesContainer.innerHTML = `
-          <table class="trades-table">
+          <p class="text-slate-500 text-xs mb-2">Filled orders (buy & sell) executed by the bot — most recent first.</p>
+          <table class="trades-table w-full border-collapse text-sm">
             <thead>
-              <tr>
-                <th>Time</th>
-                <th>Event</th>
-                <th>Side</th>
-                <th>Size</th>
-                <th>Price</th>
-                <th>Status</th>
-                <th>Profit</th>
-                <th>Reason</th>
+              <tr class="border-b border-slate-200 dark:border-slate-700">
+                <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Time</th>
+                <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Event</th>
+                <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Side</th>
+                <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Size</th>
+                <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Price</th>
+                <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Type</th>
+                <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Profit</th>
+                <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Reason</th>
               </tr>
             </thead>
             <tbody>
-              ${trades.slice().reverse().map(trade => `
-                <tr class="trade-row trade-${trade.status}">
-                  <td>${new Date(trade.timestamp).toLocaleTimeString()}</td>
-                  <td class="event-slug">${trade.eventSlug}</td>
-                  <td><span class="side-${trade.side.toLowerCase()}">${trade.side}</span> ${trade.direction ? `<span class="direction-badge direction-${trade.direction.toLowerCase()}">${trade.direction}</span>` : ''}</td>
-                  <td>$${trade.size.toFixed(2)}</td>
-                  <td>${trade.price.toFixed(2)}${trade.orderType === 'LIMIT' && trade.limitPrice ? ` (limit: ${trade.limitPrice.toFixed(2)})` : ''}</td>
-                  <td><span class="status-badge status-${trade.status}">${trade.status}</span> ${trade.orderType === 'LIMIT' ? '<span class="order-type">LIMIT</span>' : ''}</td>
-                  <td class="${trade.profit !== undefined ? (trade.profit >= 0 ? 'profit' : 'loss') : ''}">
-                    ${trade.profit !== undefined ? `$${trade.profit.toFixed(2)}` : '--'}
-                  </td>
-                  <td class="reason">${trade.reason}</td>
+              ${filledTrades.map((trade) => `
+                <tr class="trade-row trade-filled border-b border-slate-100 dark:border-slate-700/50">
+                  <td class="py-2 pr-2">${new Date(trade.timestamp).toLocaleString()}</td>
+                  <td class="event-slug py-2 pr-2">${trade.eventSlug}</td>
+                  <td class="py-2 pr-2"><span class="side-${trade.side.toLowerCase()}">${trade.side}</span>${trade.direction ? ` <span class="direction-badge direction-${trade.direction.toLowerCase()}">${trade.direction}</span>` : ''}</td>
+                  <td class="py-2 pr-2">$${trade.size.toFixed(2)}</td>
+                  <td class="py-2 pr-2">${trade.price.toFixed(2)}${trade.orderType === 'LIMIT' && trade.limitPrice ? ` (limit: ${trade.limitPrice.toFixed(2)})` : ''}</td>
+                  <td class="py-2 pr-2">${trade.orderType === 'LIMIT' ? 'LIMIT' : 'MARKET'}</td>
+                  <td class="py-2 pr-2 ${trade.profit !== undefined ? (trade.profit >= 0 ? 'profit text-emerald-600' : 'loss text-red-600') : ''}">${trade.profit !== undefined ? `$${trade.profit.toFixed(2)}` : '—'}</td>
+                  <td class="reason py-2 pr-2 text-slate-600 dark:text-slate-400">${trade.reason}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -1637,76 +1688,23 @@ export class StreamingPlatform {
 
       const orders = data.orders || [];
       console.log('[Orders] Fetched orders:', orders.length);
-      
-      // Get all positions from trading manager
-      const status = this.tradingManager.getStatus();
-      const positions = status.positions || [];
-      
-      // Count orders by status
+
       const liveOrders = orders.filter((o: any) => o.status === 'LIVE').length;
-      const filledOrders = orders.filter((o: any) => 
+      const filledOrders = orders.filter((o: any) =>
         o.status === 'FILLED' || o.status === 'EXECUTED' || o.status === 'CLOSED'
       ).length;
 
       if (ordersCount) {
-        const positionText = positions.length > 0 ? `${positions.length} position${positions.length > 1 ? 's' : ''}` : '';
-        const ordersText = orders.length === 0 ? 'No orders' : `${orders.length} total (${liveOrders} live, ${filledOrders} filled)`;
-        ordersCount.textContent = positions.length > 0 ? `${positionText}, ${ordersText}` : ordersText;
+        ordersCount.textContent = orders.length === 0
+          ? 'No orders'
+          : `${orders.length} order${orders.length !== 1 ? 's' : ''} (${liveOrders} live, ${filledOrders} filled)`;
       }
 
-      // Always render orders table with headers
       if (ordersContainer) {
-        // Build position rows for all positions
-        const positionRows = positions.map((position, index) => {
-          // Get filled orders for this position
-          const filledOrdersForPosition = position.filledOrders || [];
-          const totalFilled = filledOrdersForPosition.reduce((sum, fo) => sum + fo.size, 0);
-          const fillPercentage = position.size > 0 ? (totalFilled / position.size * 100).toFixed(1) : '0.0';
-          
-          // Get first order ID and hash from filled orders
-          const firstOrder = filledOrdersForPosition[0];
-          const orderId = firstOrder?.orderId ? firstOrder.orderId.substring(0, 8) + '...' : `POS-${index + 1}`;
-          const hash = firstOrder?.orderId ? firstOrder.orderId.substring(0, 16) + '...' : '--';
-          const created = firstOrder?.timestamp ? new Date(firstOrder.timestamp).toLocaleString() : new Date(position.entryTimestamp).toLocaleString();
-          
-          return `
-            <tr class="order-row order-position" data-position-id="${position.id}">
-              <td class="order-id">${orderId}</td>
-              <td class="token-id">${position.tokenId ? position.tokenId.substring(0, 10) + '...' : '--'}</td>
-              <td>${hash}</td>
-              <td>${totalFilled.toFixed(2)} (${fillPercentage}%)</td>
-              <td><span class="status-badge status-position">ACTIVE</span></td>
-              <td>${created}</td>
-              <td>
-                <button class="btn-sell-order btn-sell-position" 
-                  data-position-id="${position.id}"
-                  data-token-id="${position.tokenId || ''}" 
-                  data-size="${position.size || 0}"
-                  data-price="${position.entryPrice || 0}"
-                  data-direction="${position.direction || ''}">Sell</button>
-              </td>
-            </tr>
-          `;
-        }).join('');
-
-        ordersContainer.innerHTML = `
-          <table class="orders-table">
-            <thead>
-              <tr>
-                <th>Order ID</th>
-                <th>Token ID</th>
-                <th>Hash</th>
-                <th>Filled</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${positionRows}
-              ${orders.length === 0 && positions.length === 0
-                ? '<tr><td colspan="7" class="orders-empty-cell">No orders or positions</td></tr>'
-                : orders.map((order: any) => {
+        const orderRows =
+          orders.length === 0
+            ? '<tr><td colspan="7" class="orders-empty-cell">No orders</td></tr>'
+            : orders.map((order: any) => {
                     const orderStatus = (order.status || 'UNKNOWN').toUpperCase();
                     const isFilled = orderStatus === 'FILLED' || orderStatus === 'EXECUTED' || orderStatus === 'CLOSED';
                     const isLive = orderStatus === 'LIVE';
@@ -1737,41 +1735,41 @@ export class StreamingPlatform {
                         </td>
                       </tr>
                     `;
-                  }).join('')
-              }
-            </tbody>
+                  }).join('');
+
+        ordersContainer.innerHTML = `
+          <table class="orders-table">
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Token ID</th>
+                <th>Hash</th>
+                <th>Filled</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>${orderRows}</tbody>
           </table>
         `;
 
-        // Add event listeners for cancel and sell buttons
         const cancelButtons = ordersContainer.querySelectorAll('.btn-cancel-order');
         cancelButtons.forEach(btn => {
           btn.addEventListener('click', async (e) => {
             const orderId = (e.target as HTMLButtonElement).getAttribute('data-order-id');
-            if (orderId) {
-              await this.cancelOrder(orderId);
-            }
+            if (orderId) await this.cancelOrder(orderId);
           });
         });
 
-        // Add event listeners for sell buttons (both order sell and position sell)
         const sellButtons = ordersContainer.querySelectorAll('.btn-sell-order');
         sellButtons.forEach(btn => {
           btn.addEventListener('click', async (e) => {
-            const isPosition = btn.classList.contains('btn-sell-position');
             const orderId = (e.target as HTMLButtonElement).getAttribute('data-order-id');
             const tokenId = (e.target as HTMLButtonElement).getAttribute('data-token-id');
             const size = (e.target as HTMLButtonElement).getAttribute('data-size');
             const price = (e.target as HTMLButtonElement).getAttribute('data-price');
-            
-            if (isPosition) {
-              // Sell specific position
-              const positionId = (e.target as HTMLButtonElement).getAttribute('data-position-id');
-              if (positionId) {
-                await this.sellPosition(positionId, tokenId || '', parseFloat(size || '0'), parseFloat(price || '0'));
-              }
-            } else if (orderId && tokenId && size) {
-              // Sell specific order
+            if (orderId && tokenId && size) {
               await this.sellOrder(orderId, tokenId, parseFloat(size), parseFloat(price || '0'));
             }
           });
@@ -1805,6 +1803,102 @@ export class StreamingPlatform {
       if (ordersCount) {
         ordersCount.textContent = 'Error';
       }
+    }
+  }
+
+  /**
+   * Fetch and display only open (unfilled) orders in the Open Orders tab.
+   */
+  private async fetchAndDisplayOpenOrders(): Promise<void> {
+    const container = document.getElementById('open-orders-container');
+    const countEl = document.getElementById('open-orders-count');
+    if (!container) return;
+
+    if (!this.walletState.isInitialized || !this.walletState.apiCredentials || !this.walletState.proxyAddress) {
+      container.innerHTML = `<p class="text-slate-500 text-sm">Wallet not initialized. Initialize trading session first.</p>`;
+      if (countEl) countEl.textContent = '—';
+      return;
+    }
+
+    container.innerHTML = `<p class="text-slate-500 text-sm">Loading open orders...</p>`;
+    if (countEl) countEl.textContent = 'Loading...';
+
+    try {
+      const response = await fetch(
+        `/api/orders?apiCredentials=${encodeURIComponent(JSON.stringify(this.walletState.apiCredentials))}&proxyAddress=${encodeURIComponent(this.walletState.proxyAddress)}`
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to fetch orders');
+
+      const allOrders: any[] = data.orders || [];
+      const openOrders = allOrders.filter(
+        (o: any) => (o.status || '').toUpperCase() === 'LIVE' || (o.status || '').toUpperCase() === 'PARTIALLY_FILLED'
+      );
+
+      if (countEl) {
+        countEl.textContent = openOrders.length === 0 ? 'No open orders' : `${openOrders.length} open order${openOrders.length !== 1 ? 's' : ''}`;
+      }
+
+      if (openOrders.length === 0) {
+        container.innerHTML = `<p class="text-slate-500 text-sm">No open orders. Orders that are placed but not yet filled appear here.</p>`;
+        return;
+      }
+
+      const rows = openOrders.map((order: any) => {
+        const orderId = order.id || order.orderID || '--';
+        const side = (order.side || '—').toUpperCase();
+        const price = order.price != null ? Number(order.price).toFixed(2) : '—';
+        const originalSize = order.original_size != null ? Number(order.original_size).toFixed(2) : '—';
+        const matched = order.size_matched != null ? Number(order.size_matched).toFixed(2) : '0';
+        const tokenId = order.asset_id || order.token_id || '—';
+        const created = order.created_at
+          ? new Date(typeof order.created_at === 'number' ? order.created_at * 1000 : order.created_at).toLocaleString()
+          : '—';
+        const status = (order.status || 'LIVE').toUpperCase();
+        return `
+          <tr class="order-row order-live" data-order-id="${orderId}">
+            <td class="order-id font-mono text-xs">${String(orderId).substring(0, 12)}...</td>
+            <td><span class="status-badge ${side === 'BUY' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}">${side}</span></td>
+            <td>${price}</td>
+            <td>${originalSize}</td>
+            <td>${matched}</td>
+            <td class="font-mono text-xs">${String(tokenId).substring(0, 10)}...</td>
+            <td class="text-slate-500">${created}</td>
+            <td><span class="status-badge status-live">${status}</span></td>
+            <td><button type="button" class="btn-cancel-open-order px-2 py-1 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded text-xs font-medium hover:bg-red-200 dark:hover:bg-red-900/50" data-order-id="${orderId}">Cancel</button></td>
+          </tr>
+        `;
+      }).join('');
+
+      container.innerHTML = `
+        <table class="orders-table w-full border-collapse text-sm">
+          <thead>
+            <tr class="border-b border-slate-200 dark:border-slate-700">
+              <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Order ID</th>
+              <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Side</th>
+              <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Price</th>
+              <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Size</th>
+              <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Matched</th>
+              <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Token</th>
+              <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Created</th>
+              <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Status</th>
+              <th class="text-left py-2 pr-2 font-medium text-slate-600 dark:text-slate-400">Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+
+      container.querySelectorAll('.btn-cancel-open-order').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          const id = (e.target as HTMLButtonElement).getAttribute('data-order-id');
+          if (id) await this.cancelOrder(id);
+        });
+      });
+    } catch (error) {
+      console.error('[Open Orders] Error fetching:', error);
+      container.innerHTML = `<p class="text-red-600 dark:text-red-400 text-sm">Error: ${error instanceof Error ? error.message : 'Unknown error'}</p>`;
+      if (countEl) countEl.textContent = 'Error';
     }
   }
 
@@ -1843,8 +1937,8 @@ export class StreamingPlatform {
 
       console.log('[Orders] ✅ Order cancelled successfully:', orderId);
 
-      // Refresh orders list
       await this.fetchAndDisplayOrders();
+      await this.fetchAndDisplayOpenOrders();
     } catch (error) {
       console.error('[Orders] ❌ Error cancelling order:', error);
       alert(`Failed to cancel order: ${error instanceof Error ? error.message : 'Unknown error'}`);
