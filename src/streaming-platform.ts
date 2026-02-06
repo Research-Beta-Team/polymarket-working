@@ -76,6 +76,15 @@ export class StreamingPlatform {
         this.fetchAndDisplayPositions();
         this.fetchAndDisplayOpenOrders();
       }
+      // Persist trade to Supabase (if configured) so history survives refresh
+      if (this.walletState.proxyAddress) {
+        this.persistTrade(trade).catch((err) => console.warn('[Trades] Persist failed:', err));
+      }
+    });
+    this.tradingManager.setOnPositionsChange(() => {
+      if (this.walletState.proxyAddress) {
+        this.persistPositions().catch((err) => console.warn('[Positions] Persist failed:', err));
+      }
     });
     this.tradingManager.loadStrategyConfig();
     this.redemptionService = new RedemptionService({
@@ -1152,6 +1161,9 @@ export class StreamingPlatform {
       entryTimeRemainingMaxSeconds: entryTimeRemainingMax,
     });
 
+    if (this.walletState.proxyAddress) {
+      this.persistStrategy().catch((err) => console.warn('[Strategy] Persist failed:', err));
+    }
     alert('Strategy configuration saved!');
   }
 
@@ -1369,6 +1381,11 @@ export class StreamingPlatform {
       this.walletState.isConnected = true;
       this.walletState.error = null;
 
+      // Load persisted state from Supabase so bot stays consistent across refresh
+      await this.fetchTradesAndLoad();
+      await this.fetchPositionsAndLoad();
+      await this.fetchStrategyAndLoad();
+
       // Enable initialize button
       const initBtn = document.getElementById('initialize-session') as HTMLButtonElement;
       if (initBtn) {
@@ -1469,6 +1486,11 @@ export class StreamingPlatform {
       this.fetchAndDisplayPositions();
       this.startPositionsRefreshInterval();
 
+      // Load persisted state so bot stays consistent
+      await this.fetchTradesAndLoad();
+      await this.fetchPositionsAndLoad();
+      await this.fetchStrategyAndLoad();
+
       this.renderWalletSection();
       alert('Trading session initialized successfully!');
     } catch (error) {
@@ -1511,6 +1533,92 @@ export class StreamingPlatform {
       this.walletState.balanceLoading = false;
       this.renderWalletSection();
     }
+  }
+
+  /** Load trade history from API (Supabase) and apply to trading manager so History tab shows. */
+  private async fetchTradesAndLoad(): Promise<void> {
+    const proxy = this.walletState.proxyAddress;
+    if (!proxy) return;
+    try {
+      const res = await fetch(`/api/trades?walletAddress=${encodeURIComponent(proxy)}`);
+      if (!res.ok) return;
+      const trades = await res.json();
+      if (Array.isArray(trades)) {
+        this.tradingManager.loadTradesFromStorage(trades);
+        this.renderTradingSection();
+      }
+    } catch (e) {
+      console.warn('[Trades] Failed to load history:', e);
+    }
+  }
+
+  /** Persist a single trade to API (Supabase) so history survives refresh. */
+  private async persistTrade(trade: import('./trading-types').Trade): Promise<void> {
+    const proxy = this.walletState.proxyAddress;
+    if (!proxy) return;
+    await fetch('/api/trades', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trade, walletAddress: proxy }),
+    });
+  }
+
+  /** Load positions from API and apply to trading manager so exit logic is correct after refresh. */
+  private async fetchPositionsAndLoad(): Promise<void> {
+    const proxy = this.walletState.proxyAddress;
+    if (!proxy) return;
+    try {
+      const res = await fetch(`/api/bot-positions?walletAddress=${encodeURIComponent(proxy)}`);
+      if (!res.ok) return;
+      const positions = await res.json();
+      if (Array.isArray(positions)) {
+        this.tradingManager.loadPositionsFromStorage(positions);
+        this.renderTradingSection();
+      }
+    } catch (e) {
+      console.warn('[BotPositions] Failed to load:', e);
+    }
+  }
+
+  /** Persist current positions to API so state is consistent across refresh. */
+  private async persistPositions(): Promise<void> {
+    const proxy = this.walletState.proxyAddress;
+    if (!proxy) return;
+    const positions = this.tradingManager.getPositions();
+    await fetch('/api/bot-positions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ positions, walletAddress: proxy }),
+    });
+  }
+
+  /** Load strategy from API and apply so same strategy across devices. */
+  private async fetchStrategyAndLoad(): Promise<void> {
+    const proxy = this.walletState.proxyAddress;
+    if (!proxy) return;
+    try {
+      const res = await fetch(`/api/strategy?walletAddress=${encodeURIComponent(proxy)}`);
+      if (!res.ok) return;
+      const config = await res.json();
+      if (config && typeof config === 'object' && Object.keys(config).length > 0) {
+        this.tradingManager.setStrategyConfig(config);
+        this.renderTradingSection();
+      }
+    } catch (e) {
+      console.warn('[Strategy] Failed to load:', e);
+    }
+  }
+
+  /** Persist strategy to API (call after user saves strategy). */
+  private async persistStrategy(): Promise<void> {
+    const proxy = this.walletState.proxyAddress;
+    if (!proxy) return;
+    const config = this.tradingManager.getStrategyConfig();
+    await fetch('/api/strategy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config, walletAddress: proxy }),
+    });
   }
 
   private updateFooterIds(conditionId: string, questionId: string, proxy: string): void {

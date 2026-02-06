@@ -37,3 +37,4 @@ npm run dev
 
 - `POLYMARKET_MAGIC_PK` – Wallet private key (for server-side APIs; keep secret).
 - `POLYGON_RPC_URL` – Polygon RPC (defaults to public endpoint if unset).
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` – Optional. When set, the bot stores **trades**, **positions**, and **strategy config** in Supabase so state stays consistent across refresh and devices: History tab persists, open positions are restored (stop loss / profit target work correctly), and strategy is the same per wallet. Run `supabase-schema.sql` in the Supabase SQL Editor to create the `trades`, `bot_positions`, and `strategy_config` tables.
