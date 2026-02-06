@@ -18,8 +18,6 @@ export class TradingManager {
   private status: TradingStatus;
   private onStatusUpdate: ((status: TradingStatus) => void) | null = null;
   private onTradeUpdate: ((trade: Trade) => void) | null = null;
-  private onPositionsChange: (() => void) | null = null;
-  private _loadingPositionsFromStorage: boolean = false;
   private isMonitoring: boolean = false; // Flag to control continuous monitoring loop
   private activeEvent: EventDisplayData | null = null;
   private pendingLimitOrders: Map<string, Trade> = new Map(); // Map of tokenId -> pending limit order
@@ -103,12 +101,31 @@ export class TradingManager {
     return { ...this.strategyConfig };
   }
 
+  private static readonly TRADES_STORAGE_KEY = 'polymarketTrades';
+  private static readonly MAX_PERSISTED_TRADES = 500;
+
   private saveStrategyConfig(): void {
     try {
       localStorage.setItem('tradingStrategy', JSON.stringify(this.strategyConfig));
     } catch (error) {
       console.warn('Failed to save strategy config:', error);
     }
+  }
+
+  private saveTrades(): void {
+    try {
+      const toSave = this.trades.slice(-TradingManager.MAX_PERSISTED_TRADES);
+      localStorage.setItem(TradingManager.TRADES_STORAGE_KEY, JSON.stringify(toSave));
+    } catch (error) {
+      console.warn('Failed to save trades to localStorage:', error);
+    }
+  }
+
+  private recomputeStatusFromTrades(): void {
+    this.status.totalTrades = this.trades.length;
+    this.status.successfulTrades = this.trades.filter((t) => t.status === 'filled').length;
+    this.status.failedTrades = this.trades.filter((t) => t.status === 'failed').length;
+    this.status.totalProfit = this.trades.reduce((sum, t) => sum + (t.profit ?? 0), 0);
   }
 
   loadStrategyConfig(): void {
@@ -122,17 +139,27 @@ export class TradingManager {
     }
   }
 
+  loadTrades(): void {
+    try {
+      const raw = localStorage.getItem(TradingManager.TRADES_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Trade[];
+        if (Array.isArray(parsed)) {
+          this.trades = parsed;
+          this.recomputeStatusFromTrades();
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load trades from localStorage:', error);
+    }
+  }
+
   setOnStatusUpdate(callback: (status: TradingStatus) => void): void {
     this.onStatusUpdate = callback;
   }
 
   setOnTradeUpdate(callback: (trade: Trade) => void): void {
     this.onTradeUpdate = callback;
-  }
-
-  /** Called when positions are persisted (e.g. Supabase). Use to sync positions after any mutation. */
-  setOnPositionsChange(callback: () => void): void {
-    this.onPositionsChange = callback;
   }
 
   /**
@@ -283,7 +310,6 @@ export class TradingManager {
         this.positions.push(newPosition);
         this.status.positions = [...this.positions];
         this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
-        this.notifyPositionsChange();
         this.status.successfulTrades++;
         const trade: Trade = {
           id: `limit-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -729,7 +755,6 @@ export class TradingManager {
         this.positions = this.positions.filter(p => !positionIds.includes(p.id));
         this.status.positions = [...this.positions];
         this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
-        this.notifyPositionsChange();
         console.log(`[TradingManager] ✅ Profit target limit sell filled (verified matched), orderId: ${orderId.substring(0, 8)}..., removed ${before - this.positions.length} position(s)`);
         this.notifyStatusUpdate();
       }
@@ -1145,7 +1170,7 @@ export class TradingManager {
 
         // Add to positions array
         this.positions.push(newPosition);
-        this.notifyPositionsChange();
+        
         // Update status
         this.status.positions = [...this.positions];
         this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
@@ -1949,7 +1974,7 @@ export class TradingManager {
           p => !closedPositionIds.includes(p.id)
         );
         const positionsAfterRemoval = this.positions.length;
-        this.notifyPositionsChange();
+        
         this.status.positions = [...this.positions];
         this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
         
@@ -2004,7 +2029,6 @@ export class TradingManager {
             
             // Final cleanup after retry
             this.positions = this.positions.filter(p => !closedPositionIds.includes(p.id));
-            this.notifyPositionsChange();
             this.status.positions = [...this.positions];
             this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
             
@@ -2047,7 +2071,6 @@ export class TradingManager {
           // Final cleanup
           if (closedPositionIds.length > 0) {
             this.positions = this.positions.filter(p => !closedPositionIds.includes(p.id));
-            this.notifyPositionsChange();
             this.status.positions = [...this.positions];
             this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
             console.log(`[TradingManager] 🔄 EMERGENCY RETRY: Closed ${closedPositionIds.length} of ${activePositions.length} position(s)`);
@@ -2077,7 +2100,6 @@ export class TradingManager {
       if (closedPositionIds.length > 0) {
         console.log(`[TradingManager] 🧹 Cleaning up ${closedPositionIds.length} successfully closed position(s) despite error...`);
         this.positions = this.positions.filter(p => !closedPositionIds.includes(p.id));
-        this.notifyPositionsChange();
         this.status.positions = [...this.positions];
         this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
         this.notifyStatusUpdate();
@@ -2258,7 +2280,6 @@ export class TradingManager {
         p.sharesRemaining = prevShares * ratio;
       }
       currentTotalSize = positions.reduce((sum, p) => sum + p.size, 0);
-      this.notifyPositionsChange();
       this.status.positions = [...this.positions];
       this.status.totalPositionSize = this.positions.reduce((s, p) => s + p.size, 0);
       console.log(`[TradingManager] 📉 Partial fill: adjusted position sizes (remaining ${remainingShares.toFixed(4)} shares, $${currentTotalSize.toFixed(2)}). Retrying sell.`);
@@ -2618,33 +2639,11 @@ export class TradingManager {
     return [...this.positions];
   }
 
-  private notifyPositionsChange(): void {
-    if (!this._loadingPositionsFromStorage && this.onPositionsChange) {
-      this.onPositionsChange();
-    }
-  }
-
-  /**
-   * Load positions from storage (e.g. Supabase). Restores bot state so exit logic (stop loss, profit target) is correct after refresh.
-   */
-  loadPositionsFromStorage(positions: Position[]): void {
-    this._loadingPositionsFromStorage = true;
-    try {
-      this.positions = Array.isArray(positions) ? positions.map((p) => ({ ...p })) : [];
-      this.status.positions = [...this.positions];
-      this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
-      this.notifyStatusUpdate();
-    } finally {
-      this._loadingPositionsFromStorage = false;
-    }
-  }
-
   /** Remove positions by ID (e.g. after redemption). Used by Auto-Redemption Service. */
   removePositionsByIds(positionIds: string[]): void {
     if (positionIds.length === 0) return;
     const set = new Set(positionIds);
     this.positions = this.positions.filter((p) => !set.has(p.id));
-    this.notifyPositionsChange();
     this.status.positions = [...this.positions];
     this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
     this.notifyStatusUpdate();
@@ -2692,7 +2691,6 @@ export class TradingManager {
     
     // Remove from positions array
     this.positions = this.positions.filter(p => p.id !== positionId);
-    this.notifyPositionsChange();
     this.status.positions = [...this.positions];
     this.status.totalPositionSize = this.positions.reduce((sum, p) => sum + p.size, 0);
     
@@ -2711,20 +2709,7 @@ export class TradingManager {
     if (this.onTradeUpdate) {
       this.onTradeUpdate(trade);
     }
-  }
-
-  /**
-   * Load trade history from storage (e.g. Supabase). Replaces in-memory trades and recomputes
-   * status totals so the History tab shows correctly. Call after wallet connect to restore history.
-   */
-  loadTradesFromStorage(trades: Trade[]): void {
-    this.trades = Array.isArray(trades) ? [...trades] : [];
-    const filled = this.trades.filter((t) => t.status === 'filled');
-    this.status.totalTrades = this.trades.length;
-    this.status.successfulTrades = filled.length;
-    this.status.failedTrades = this.trades.filter((t) => t.status === 'failed').length;
-    this.status.totalProfit = filled.reduce((sum, t) => sum + (t.profit ?? 0), 0);
-    this.notifyStatusUpdate();
+    this.saveTrades();
   }
 
   clearTrades(): void {
@@ -2732,6 +2717,11 @@ export class TradingManager {
     this.status.totalTrades = 0;
     this.status.successfulTrades = 0;
     this.status.failedTrades = 0;
+    try {
+      localStorage.removeItem(TradingManager.TRADES_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
     this.status.totalProfit = 0;
     this.status.currentPosition = undefined;
     this.pendingLimitOrders.clear();
